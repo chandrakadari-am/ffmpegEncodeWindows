@@ -1,0 +1,13 @@
+prefix=C:/libva-prefix
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+libva_version=2.23.0.pre1
+va_api_version=1.23.0
+driverdir=C:/libva-prefix/bin
+
+Name: va
+Description: Userspace Video Acceleration (VA) core interface
+Version: 1.23.0
+Libs: -L${libdir} -lva
+Cflags: -I${includedir}

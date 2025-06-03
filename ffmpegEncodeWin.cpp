@@ -295,7 +295,7 @@ int ffmpegEncodeWin::EncodedLoop(void)
         if (frameCount == 1)
         {
             DumpVaSurfaceToNV12File(m_vaDisplay, vaSurfacesDebug,
-                m_width, m_height, "C:\\proj\\prototype\\ScreenCaptureDX12VaApiShare\\ffmpegEncodeWindows\\frame_dump.nv12");
+                m_width, m_height, "frame_dump.nv12");
 
         }
 
@@ -384,6 +384,7 @@ int ffmpegEncodeWin::TestVaSurfaces(void) {
     CheckvaQueryConfigProfiles();
 
     FillVaSurfaceWithRed(m_vaDisplay, vaSurfacesDebug, m_width, m_height);
+
 
     // verification - write captured frame to a file 
     DumpVaSurfaceToNV12File(m_vaDisplay, vaSurfacesDebug,

@@ -91,7 +91,7 @@ void ScreenCaptureEncoder::InitHWEncoder(const encConfig &enccfg) {
     }
     lgr_msg(lgra_video, "[ OK ] FFMPEG Successfully hardware frames context initialized");
     
-    const char* filename = "C:\\proj\\prototype\\ScreenCaptureDX12VaApiShare\\ffmpegEncodeWindows\\output.mp4";
+    const char* filename = "output.mp4";
     avformat_alloc_output_context2(&m_formatCtx, NULL, "mp4", filename);
     m_stream = avformat_new_stream(m_formatCtx, nullptr);
     m_stream->time_base = av_d2q(1.0 / enccfg.framerate, 60);
