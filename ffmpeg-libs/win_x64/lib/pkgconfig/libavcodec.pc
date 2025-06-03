@@ -1,0 +1,14 @@
+prefix=./../../../ffmpeg-libs/win_x64
+exec_prefix=${prefix}
+libdir=./../../../ffmpeg-libs/win_x64/lib
+includedir=./../../../ffmpeg-libs/win_x64/include
+
+Name: libavcodec
+Description: FFmpeg codec library
+Version: 61.31.101
+Requires: 
+Requires.private: libswresample >= 5.4.100, libavutil >= 59.56.100
+Conflicts:
+Libs: -L${libdir}  -lavcodec 
+Libs.private: mfuuid.lib ole32.lib strmiids.lib ole32.lib user32.lib
+Cflags: -I${includedir}
