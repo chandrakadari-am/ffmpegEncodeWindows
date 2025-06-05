@@ -82,6 +82,7 @@ void ScreenCaptureEncoder::InitHWEncoder(const encConfig &enccfg) {
     frames_ctx->sw_format = AV_PIX_FMT_NV12;
     frames_ctx->width = enccfg.width;
     frames_ctx->height = enccfg.height;
+    frames_ctx->initial_pool_size = 8;                // number of VA surfaces to allocate
     
     ret = av_hwframe_ctx_init((m_hw_frames_ctx));
     if (ret < 0) {
@@ -123,6 +124,7 @@ void ScreenCaptureEncoder::InitHWEncoder(const encConfig &enccfg) {
     if (ret < 0)
     {
         lgr_err(lgra_video, "[FAIL] FFMPEG Failed to Open Codec");
+        return;
     }
     lgr_msg(lgra_video, "[ OK ] FFMPEG Successfully Opened Codec");
     

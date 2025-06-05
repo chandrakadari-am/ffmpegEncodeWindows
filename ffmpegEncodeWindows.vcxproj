@@ -136,6 +136,12 @@
     <ClCompile Include="lgr.cpp" />
     <ClCompile Include="lgr.descr.cpp" />
     <ClCompile Include="sc_encoder.cpp" />
+    <ClCompile Include="videoProcessor.cpp" />
+    <ClCompile Include="videoUtils.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="videoProcessor.h" />
+    <ClInclude Include="videoUtils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

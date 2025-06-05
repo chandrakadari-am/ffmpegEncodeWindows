@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include <string>
 #include <d3d11.h>
 #include <d3d12.h>
@@ -18,129 +18,7 @@ using namespace Microsoft::WRL;
 #pragma comment(lib, "dxgi.lib")
 #include <va/va.h>
 #include <va/va_enc_h264.h>
-
-
-void FillVaSurfaceWithRed(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height) {
-    VAImage image;
-
-    VAImageFormat nv12Format = {};
-    nv12Format.fourcc = VA_FOURCC_NV12;
-    nv12Format.byte_order = VA_LSB_FIRST;
-    nv12Format.bits_per_pixel = 12; // NV12 is 12 bits per pixel (8 for Y + 4 for UV)
-    nv12Format.depth = 8;           // 8 bits per component
-
-    // These masks are irrelevant for NV12 but must be zeroed for safety
-    nv12Format.red_mask = 0;
-    nv12Format.green_mask = 0;
-    nv12Format.blue_mask = 0;
-    nv12Format.alpha_mask = 0;
-    memset(nv12Format.va_reserved, 0, sizeof(nv12Format.va_reserved));
-
-    VAStatus va_status = vaCreateImage(vaDisplay, &nv12Format, width, height, &image);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "Failed to create VAImage with NV12 format. Status: " << va_status << "\n";
-        return;
-    }
-
-    void* pData = nullptr;
-    va_status = vaMapBuffer(vaDisplay, image.buf, &pData);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "Failed to map VA image buffer\n";
-        vaDestroyImage(vaDisplay, image.image_id);
-        return;
-    }
-
-    uint8_t* yPlane = static_cast<uint8_t*>(pData);
-    uint8_t* uvPlane = yPlane + image.pitches[0] * height;
-
-    // Fill with red (Y=76, U=84, V=255)
-    for (int y = 0; y < height; ++y) {
-        std::fill(yPlane + y* image.pitches[0], yPlane + y*image.pitches[0] + width, 76);
-    }
-    for (int y = 0; y < height / 2; ++y) {
-        for (int x = 0; x < width / 2; ++x) {
-            uvPlane[y * image.pitches[1] + x * 2 + 0] = 84;   // U
-            uvPlane[y * image.pitches[1] + x * 2 + 1] = 255;  // V
-        }
-    }
-
-    vaUnmapBuffer(vaDisplay, image.buf);
-
-    // Put image into surface
-    va_status = vaPutImage(vaDisplay, vaSurface, image.image_id,
-        0, 0, width, height,
-        0, 0, width, height);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "vaPutImage failed\n";
-    }
-
-    va_status = vaSyncSurface(vaDisplay, vaSurface);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "vaSyncSurface failed after vaPutImage\n";
-    }
-
-    vaDestroyImage(vaDisplay, image.image_id);
-}
-
-
-void DumpVaSurfaceToNV12File(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, const std::string& filename) {
-    VAImage vaImage;
-    VAStatus va_status;
-
-    va_status = vaSyncSurface(vaDisplay, vaSurface);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "vaSyncSurface failed after vaPutImage\n";
-    }
-
-    va_status = vaDeriveImage(vaDisplay, vaSurface, &vaImage);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "Failed to derive image from VA surface. Error: " << va_status << std::endl;
-        return;
-    }
-
-    // Map the image to access its data
-    void* pData;
-    va_status = vaMapBuffer(vaDisplay, vaImage.buf, &pData);
-    if (va_status != VA_STATUS_SUCCESS) {
-        std::cerr << "Failed to map VA buffer. Error: " << va_status << std::endl;
-        vaDestroyImage(vaDisplay, vaImage.image_id);
-        return;
-    }
-
-    // Open the file for writing
-    std::ofstream file(filename, std::ios::binary);
-    if (!file) {
-        std::cerr << "Failed to open file for writing." << std::endl;
-        vaUnmapBuffer(vaDisplay, vaImage.buf);
-        vaDestroyImage(vaDisplay, vaImage.image_id);
-        return;
-    }
-
-    // Write the Y plane
-    uint8_t* yPlane = static_cast<uint8_t*>(pData);
-    size_t ySize = vaImage.pitches[0] * height;
-
-    // Write the UV plane
-    uint8_t* uvPlane = yPlane + vaImage.pitches[0] * height;
-    size_t uvSize = vaImage.pitches[1] * (height / 2);
-
-    for (int y = 0; y < height; ++y) {
-        file.write(reinterpret_cast<char*>(yPlane + y * vaImage.pitches[0]), width);
-    }
-    for (int y = 0; y < height / 2; ++y) {
-        file.write(reinterpret_cast<char*>(uvPlane + y * vaImage.pitches[1]), width);
-    }
-
-    // Close the file
-    file.close();
-
-    // Unmap the buffer
-    vaUnmapBuffer(vaDisplay, vaImage.buf);
-    vaDestroyImage(vaDisplay, vaImage.image_id);
-}
-
-
-
+#include "videoUtils.h"
 
 static void message_callback(void* user_context, const char* message)
 {
@@ -195,9 +73,7 @@ void ffmpegEncodeWin::CheckvaQueryConfigProfiles() {
     }
 }
 
-int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
-
-
+int ffmpegEncodeWin::CreateFactory() {
     UINT flags = 0;
     HRESULT hr = CreateDXGIFactory2(flags, __uuidof(IDXGIFactory2), (void**)&m_factory);
     if (FAILED(hr)) {
@@ -205,26 +81,14 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
         return -1;
     }
     m_factory->EnumAdapters1(0, &m_adapter);
+    return 0;
+}
 
-    m_width = 1920;
-    m_height = 1080;
-
-    // Config and init ffmpeg encoder
-    encIfConfig cfg;
-    cfg.width = m_width;
-    cfg.height = m_height;
-    cfg.bitrate = 1000000;
-    cfg.framerate = 30;
-    cfg.codecIndex = 0;
-    cfg.qualityModeIndex = 0;
-    cfg.osVersion = AM_SC_OS_VERSION_WINDOWS;
-    cfg.deviceType = AV_HWDEVICE_TYPE_VAAPI;
-    strcpy_s(cfg.hwDeviceTypeName, sizeof(cfg.hwDeviceTypeName), "vaapi");
-    ScEncoderConfigIF(&cfg);
-
+int ffmpegEncodeWin::CreateSurfaces() {
     /*
-        Initialize VAAPI;
+    Initialize VAAPI;
     */
+    HRESULT hr;
     DXGI_ADAPTER_DESC descva = {};
     hr = m_adapter->GetDesc(&descva);
     if (FAILED(hr))
@@ -252,10 +116,7 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
     vaSetErrorCallback(m_vaDisplay, message_callback, 0);
     vaSetInfoCallback(m_vaDisplay, message_callback, 0);
 
-
-    // Create VA surface for dubug
-    VASurfaceAttrib createSurfacesAttribList[3] = {};
-
+    VASurfaceAttrib createSurfacesAttribList[2] = {};
     createSurfacesAttribList[0].type = VASurfaceAttribMemoryType;
     createSurfacesAttribList[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
     createSurfacesAttribList[0].value.type = VAGenericValueTypeInteger;
@@ -274,121 +135,256 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
         return -3;
     }
     std::cout << "[ OK ] vaCreateSurfaces vaSurfacesDebug successful va_status: " << std::hex << va_status << std::endl;
+
+
+    VASurfaceAttrib createSurfacesAttribList1[3] = {};
+    //ID3D12Resource* resources[] = { d3d12Texture.Get() };
+    HANDLE vaHandles[] = { m_renderSharedHandle };
+
+    createSurfacesAttribList1[0].type = VASurfaceAttribMemoryType;
+    createSurfacesAttribList1[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    createSurfacesAttribList1[0].value.type = VAGenericValueTypeInteger;
+    createSurfacesAttribList1[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_NTHANDLE;
+
+    createSurfacesAttribList1[1].type = VASurfaceAttribExternalBufferDescriptor;
+    createSurfacesAttribList1[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    createSurfacesAttribList1[1].value.type = VAGenericValueTypePointer;
+    createSurfacesAttribList1[1].value.value.p = static_cast<void*>(vaHandles);
+
+    createSurfacesAttribList1[2].type = VASurfaceAttribPixelFormat;
+    createSurfacesAttribList1[2].flags = VA_SURFACE_ATTRIB_SETTABLE;
+    createSurfacesAttribList1[2].value.type = VAGenericValueTypeInteger;
+    createSurfacesAttribList1[2].value.value.i = VA_FOURCC_NV12;
+
+    va_status = vaCreateSurfaces(m_vaDisplay, VA_RT_FORMAT_YUV420, m_width, m_height, &m_VASurfaceNV12New, 1, createSurfacesAttribList1, _countof(createSurfacesAttribList1));
+     if (va_status != VA_STATUS_SUCCESS)
+    {
+        std::cerr << "[FAIL] Failed to vaCreateSurfaces. va_status: " << std::hex << va_status << std::endl;
+        return -2;
+    }
+    std::cout << "[ OK ] vaCreateSurfaces " << " successful" << std::hex << va_status << std::endl;
+
+
+    return 0;
+}
+
+HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
+    if (initialized) return S_OK;
+
+    m_width = 1920;
+    m_height = 1200;
+
+    UINT flags = 0;
+    HRESULT hr;
+    hr = CreateDXGIFactory2(flags, IID_PPV_ARGS(&m_factory));
+    if (FAILED(hr)) return hr;
+
+    // Enumerate adapter
+    hr = m_factory->EnumAdapters1(0, &m_adapter);
+    if (FAILED(hr)) return hr;
+
+
+    // Create D3D11 device for duplication
+    D3D_FEATURE_LEVEL featureLevel;
+    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
+    hr = D3D11CreateDevice(m_adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, 0, featureLevels, ARRAYSIZE(featureLevels), D3D11_SDK_VERSION, &d3d11Device, &featureLevel, &d3d11Context);
+    if (FAILED(hr)) return hr;
+
+    // Get DXGI output (first output of first adapter)
+    ComPtr<IDXGIOutput> dxgiOutput;
+    hr = m_adapter->EnumOutputs(0, &dxgiOutput);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IDXGIOutput1> dxgiOutput1;
+    hr = dxgiOutput.As(&dxgiOutput1);
+    if (FAILED(hr)) return hr;
+
+    // Create duplication
+    hr = dxgiOutput1->DuplicateOutput(d3d11Device.Get(), &outputDuplication);
+    if (FAILED(hr)) return hr;
+
+    hr = D3D12CreateDevice(m_adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d3d12Device));
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    if (!d3d12Device) {
+        std::cerr << "Failed to create D3D12 device\n";
+        return hr;
+    }
+
+    // Create command allocator
+    d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator));
+
+    // Create command list
+    d3d12Device->CreateCommandList(
+        0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList)
+    );
+
+    // Create command queue
+    D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+    queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+    queueDesc.NodeMask = 0;
+
+    hr = (d3d12Device)->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue));
+    if (FAILED(hr)) {
+        std::cerr << "Failed to create D3D12 command queue\n";
+        return hr;
+    }
+
+    if (!converter.Initialize(d3d11Device.Get(), d3d11Context.Get(), m_width, m_height)) {
+        std::cerr << "Init failed\n";
+        hr = -1;
+        return hr;
+    }
+
+    initialized = true;
+    return S_OK;
+}
+
+ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12CommandQueue> commandQueue) {
+
+    std::cout << "CaptureScreenD3D12 =========== " << std::endl;
+
+    // Create a shared texture in D3D11
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texDesc.Width = m_width;        // capture width
+    texDesc.Height = m_height;      // capture height
+    texDesc.MipLevels = 1;
+    texDesc.ArraySize = 1;
+    texDesc.Format = DXGI_FORMAT_NV12;  // NV12 format for video frames
+    texDesc.SampleDesc.Count = 1;
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;//0;                  // NV12 is typically not bindable as render target
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
+
+    HRESULT hr = d3d11Device->CreateTexture2D(&texDesc, nullptr, &sharedTextureD3D11);
+    if (FAILED(hr)) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return nullptr;
+    }
+
+    // Get the shared handle from the D3D11 texture
+    hr = sharedTextureD3D11->QueryInterface(__uuidof(IDXGIResource), (void**)&dxgiResource);
+    if (FAILED(hr)) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return nullptr;
+    }
+
+    //HANDLE sharedHandle = nullptr;
+    hr = dxgiResource->GetSharedHandle(&m_renderSharedHandle);
+    dxgiResource->Release();
+    if (FAILED(hr) || m_renderSharedHandle == nullptr) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return nullptr;
+    }
+
+    // Open the shared handle in D3D12 device
+    hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)&sharedTextureD3D12);
+    if (FAILED(hr)) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return nullptr;
+    }
+
+    // Try to acquire next frame
+    DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
+    hr = outputDuplication->AcquireNextFrame(100, &frameInfo, &desktopResource);
+    if (FAILED(hr)) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return nullptr;
+    }
+
+    // Get D3D11 texture
+    desktopResource.As(&acquiredTexture);
+
+
+    if (converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11)) {
+        SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
+    }
+    else {
+        std::cerr << "Frame conversion failed\n";
+    }
+
+    d3d11Context->Flush();
+
+    // Copy the acquired frame into your shared texture - GPU-side copy
+    // sharedTextureD3D11 and its corresponding opened shared resource in D3D12 (sharedTextureD3D12) 
+    // both reference the same GPU memory containing the captured frame.
+    //d3d11Context->CopyResource(sharedTextureD3D11.Get(), acquiredTexture.Get());
+
+    // Get texture desc
+    D3D11_TEXTURE2D_DESC desc = {};
+    acquiredTexture->GetDesc(&desc);
+
+    outputDuplication->ReleaseFrame();
+    return d3d12Texture;
+}
+
+
+int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
+
+
+    m_width = 1920;
+    m_height = 1200;
+
+
+    InitializeD3D11Interop();
+    CaptureScreenD3D12(d3d12Device, commandQueue);
+    CreateSurfaces();
+
+    // Config and init ffmpeg encoder
+    encIfConfig cfg;
+    cfg.width = m_width;
+    cfg.height = m_height;
+    cfg.bitrate = 1000000;
+    cfg.framerate = 30;
+    cfg.codecIndex = 0;
+    cfg.qualityModeIndex = 0;
+    cfg.osVersion = AM_SC_OS_VERSION_WINDOWS;
+    cfg.deviceType = AV_HWDEVICE_TYPE_VAAPI;
+    strcpy_s(cfg.hwDeviceTypeName, sizeof(cfg.hwDeviceTypeName), "vaapi");
+    ScEncoderConfigIF(&cfg);
+
+    vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
+    DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_before.yuv");
+    FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
+    DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after.yuv");
 
     EncodedLoop();
 
     return 0;
 }
 
+
+
+
 int ffmpegEncodeWin::EncodedLoop(void)
 {
     bool encodeFlag = true;
 
-    for (int frameCount = 0; frameCount < 100; ++frameCount) {
+    d3d11Context->Flush();
 
-
-        FillVaSurfaceWithRed(m_vaDisplay, vaSurfacesDebug, m_width, m_height);
-
-
-
-        // verification - write captured frame to a file 
-        if (frameCount == 1)
-        {
-            DumpVaSurfaceToNV12File(m_vaDisplay, vaSurfacesDebug,
-                m_width, m_height, "frame_dump.nv12");
-
-        }
+    for (int frameCount = 0; frameCount < 30; ++frameCount) {
 
         // encode captured frame, d3d11Texture maps to vaSurfaces[0] via D3D12 resource
         // somehow this is not happening - #TODO debug
         if (encodeFlag) {
-            ScEncodeFrames(reinterpret_cast<void*>(static_cast<uintptr_t>(vaSurfacesDebug)), true);
+            if (frameCount == 0) {
+
+                DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump.yuv");
+            }
+            vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
+            ScEncodeFrames(reinterpret_cast<void*>(static_cast<uintptr_t>(m_VASurfaceNV12New)), true);
+            DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after_enc.yuv");
         }
 
-    }
+    } 
 
     if (encodeFlag) {
         ScEncodeClose();
     }
-
-    return 0;
-}
-
-int ffmpegEncodeWin::TestVaSurfaces(void) {
-    VAStatus va_status;
-
-    UINT flags = 0;
-    HRESULT hr = CreateDXGIFactory2(flags, __uuidof(IDXGIFactory2), (void**)&m_factory);
-    if (FAILED(hr)) {
-        std::cerr << "Failed to create CreateDXGIFactory2 device.\n";
-        return -1;
-    }
-    m_factory->EnumAdapters1(0, &m_adapter);
-
-    m_width = 1920;
-    m_height = 1080;
-
-    /*
-        Initialize VAAPI;
-    */
-    DXGI_ADAPTER_DESC descva = {};
-    hr = m_adapter->GetDesc(&descva);
-    if (FAILED(hr))
-    {
-        std::cerr << "Failed to get desc from adapter. HRESULT: " << std::hex << hr << std::endl;
-        return -1;
-    }
-    m_vaDisplay = vaGetDisplayWin32(&descva.AdapterLuid);
-    if (!m_vaDisplay)
-    {
-        std::cerr << "vaGetDisplayWin32 failed to create a VADisplay." << std::endl;
-        return -1;
-    }
-
-    int major_ver, minor_ver;
-    va_status = vaInitialize(m_vaDisplay, &major_ver, &minor_ver);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        std::cerr << "Failed to vaInitialize. va_status: " << std::hex << va_status << std::endl;
-        return -1;
-    }
-    std::cout << "vaInitialize successful va_status: " << std::hex << va_status << std::endl;
-
-    // Create VA Surfaces
-    vaSetErrorCallback(m_vaDisplay, message_callback, 0);
-    vaSetInfoCallback(m_vaDisplay, message_callback, 0);
-
-    // Create VA surface for dubug
-    VASurfaceAttrib createSurfacesAttribList[2] = {};
-
-    createSurfacesAttribList[0].type = VASurfaceAttribMemoryType;
-    createSurfacesAttribList[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
-    createSurfacesAttribList[0].value.type = VAGenericValueTypeInteger;
-    createSurfacesAttribList[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_VA;
-
-    createSurfacesAttribList[1].type = VASurfaceAttribPixelFormat;
-    createSurfacesAttribList[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
-    createSurfacesAttribList[1].value.type = VAGenericValueTypeInteger;
-    createSurfacesAttribList[1].value.value.i = VA_FOURCC_NV12;
-
-    va_status = vaCreateSurfaces(m_vaDisplay, VA_RT_FORMAT_YUV420, m_width, m_height, &vaSurfacesDebug, 1, createSurfacesAttribList, 2);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        vaTerminate(m_vaDisplay);
-        std::cerr << "[FAIL] Failed to vaCreateSurfaces - vaSurfacesDebug. va_status: " << std::hex << va_status << std::endl;
-        return -3;
-    }
-    std::cout << "[ OK ] vaCreateSurfaces vaSurfacesDebug successful va_status: " << std::hex << va_status << std::endl;
-
-
-    CheckvaQueryConfigProfiles();
-
-    FillVaSurfaceWithRed(m_vaDisplay, vaSurfacesDebug, m_width, m_height);
-
-
-    // verification - write captured frame to a file 
-    DumpVaSurfaceToNV12File(m_vaDisplay, vaSurfacesDebug,
-        m_width, m_height, "frame_dump.nv12");
 
     return 0;
 }
@@ -400,12 +396,8 @@ int main(int argc, char* argv[])
 
     int ret = 0;
     
-    if (0) {
-        ret = sc.FFMPEG_VAAPI_Debug();
-    }
-    else {
-        ret = sc.TestVaSurfaces();
-    }
+    ret = sc.FFMPEG_VAAPI_Debug();
+
     std::cout << "RET: " << ret << std::endl;
 
     return 0;

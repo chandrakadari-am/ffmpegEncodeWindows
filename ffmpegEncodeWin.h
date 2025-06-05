@@ -6,6 +6,7 @@
 #include <va/va.h>
 #include <va/va_win32.h>
 #include "sc_encoder_if.h"
+#include "videoProcessor.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -76,17 +77,43 @@ public:
 	~ffmpegEncodeWin();
 	int FFMPEG_VAAPI_Debug();
 	int EncodedLoop(void);
-	int TestVaSurfaces(void);
-
+	int CreateSurfaces();
+	int CreateFactory();
+	ComPtr<ID3D12Resource> CaptureScreenD3D12(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12CommandQueue> commandQueue);
+	HRESULT InitializeD3D11Interop();
 private:
 	void CheckvaQueryConfigProfiles();
+
+	ComPtr<ID3D11Device> d3d11Device;
+	ComPtr<ID3D11DeviceContext> d3d11Context;
+	ComPtr<IDXGIOutputDuplication> outputDuplication;
+	bool initialized = false;
+	ComPtr<ID3D12Device> d3d12Device;
+	ComPtr<ID3D12CommandQueue> commandQueue;
+	ComPtr<ID3D12CommandAllocator> commandAllocator;
+	ComPtr<ID3D12GraphicsCommandList> commandList;
+	// Create a staging texture (CPU-readable) or shared handle for D3D12
+	ComPtr<ID3D12Resource> d3d12Texture;
+	ComPtr<ID3D11Texture2D> sharedTextureD3D11;
+	ID3D12Resource* sharedTextureD3D12 = nullptr;
+	ComPtr<ID3D11Texture2D> acquiredTexture;
+	ComPtr<IDXGIResource> desktopResource;
+	IDXGIResource* dxgiResource = nullptr;
 
 	ComPtr<IDXGIFactory4> m_factory;
 	ComPtr<IDXGIAdapter1> m_adapter;
 
 	VADisplay m_vaDisplay = { };
+	VASurfaceID vaSurfacesSrc = { };
 	VASurfaceID vaSurfacesDebug = { };
+
+	VASurfaceID m_vaRGBASurface = 0;
+	VASurfaceID m_VASurfaceNV12 = 0;
+	VASurfaceID m_VASurfaceNV12New = 0;
+	HANDLE m_renderSharedHandle = { nullptr };
 
 	int m_width;
 	int m_height;
+
+	VideoProcessorNV12Converter converter;
 };
