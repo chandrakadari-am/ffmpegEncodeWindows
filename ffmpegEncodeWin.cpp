@@ -3,7 +3,6 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
-//#include <d3d11_1.h>
 #include <wrl.h>
 #include <chrono>
 #include <thread>
@@ -117,27 +116,6 @@ int ffmpegEncodeWin::CreateSurfaces() {
     vaSetErrorCallback(m_vaDisplay, message_callback, 0);
     vaSetInfoCallback(m_vaDisplay, message_callback, 0);
 
-    VASurfaceAttrib createSurfacesAttribList[2] = {};
-    createSurfacesAttribList[0].type = VASurfaceAttribMemoryType;
-    createSurfacesAttribList[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
-    createSurfacesAttribList[0].value.type = VAGenericValueTypeInteger;
-    createSurfacesAttribList[0].value.value.i = VA_SURFACE_ATTRIB_MEM_TYPE_VA;
-
-    createSurfacesAttribList[1].type = VASurfaceAttribPixelFormat;
-    createSurfacesAttribList[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
-    createSurfacesAttribList[1].value.type = VAGenericValueTypeInteger;
-    createSurfacesAttribList[1].value.value.i = VA_FOURCC_NV12;
-
-    va_status = vaCreateSurfaces(m_vaDisplay, VA_RT_FORMAT_YUV420, m_width, m_height, &vaSurfacesDebug, 1, createSurfacesAttribList, 2);
-    if (va_status != VA_STATUS_SUCCESS)
-    {
-        vaTerminate(m_vaDisplay);
-        std::cerr << "[FAIL] Failed to vaCreateSurfaces - vaSurfacesDebug. va_status: " << std::hex << va_status << std::endl;
-        return -3;
-    }
-    std::cout << "[ OK ] vaCreateSurfaces vaSurfacesDebug successful va_status: " << std::hex << va_status << std::endl;
-
-
     VASurfaceAttrib createSurfacesAttribList1[3] = {};
     HANDLE vaHandles[] = { m_renderSharedHandle };
 
@@ -171,8 +149,7 @@ int ffmpegEncodeWin::CreateSurfaces() {
 HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
     if (initialized) return S_OK;
 
-    m_width = 1920;
-    m_height = 1200;
+
 
     UINT flags = 0;
     HRESULT hr;
@@ -240,6 +217,23 @@ HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
         return hr;
     }
 
+    // acquire a frame to get screen co-ordinates
+    DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
+    hr = outputDuplication->AcquireNextFrame(1000, &frameInfo, &desktopResource);
+    if (FAILED(hr)) {
+        std::cout << "ERROR >>>>>>> " << std::endl;
+        return -1;
+    }
+
+    // Get D3D11 texture
+    desktopResource.As(&acquiredTexture);
+    // Get texture desc
+    D3D11_TEXTURE2D_DESC desc = {};
+    acquiredTexture->GetDesc(&desc);
+    m_width = desc.Width;
+    m_height = desc.Height;
+    outputDuplication->ReleaseFrame();
+
     initialized = true;
     return S_OK;
 }
@@ -291,8 +285,8 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
         std::cout << "ERROR >>>>>>> " << std::endl;
         return nullptr;
     }
-    ComPtr<IDXGIKeyedMutex> keyedMutex11;
-    hr = sharedTextureD3D11.As(&keyedMutex11);
+    //ComPtr<IDXGIKeyedMutex> keyedMutex11;
+    ///hr = sharedTextureD3D11.As(&keyedMutex11);
 
     if (FAILED(hr)) {
         std::cerr << "Failed to get IDXGIKeyedMutex from sharedTextureD3D12\n";
@@ -300,57 +294,6 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     }
 
 
-/*
-        // Try to acquire next frame
-        DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
-        hr = outputDuplication->AcquireNextFrame(1000, &frameInfo, &desktopResource);
-        if (FAILED(hr)) {
-            std::cout << "ERROR >>>>>>> " << std::endl;
-            return nullptr;
-        }
-
-        // Get D3D11 texture
-        desktopResource.As(&acquiredTexture);
-
-
-        if (SUCCEEDED(hr)) {
-            keyedMutex11->AcquireSync(0, 500);  // Acquire D3D11 access
-            
-            // ... write/copy frame to sharedTextureD3D11
-            if (converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11)) {
-                d3d11Context->Flush();   // Push to GPU
-
-                // Wait for GPU to finish processing
-                ID3D11Query* query = nullptr;
-                D3D11_QUERY_DESC qdesc = {};
-                qdesc.Query = D3D11_QUERY_EVENT;
-                d3d11Device->CreateQuery(&qdesc, &query);
-
-                d3d11Context->End(query);  // Signal event
-                while (S_OK != d3d11Context->GetData(query, nullptr, 0, 0)) {
-                    std::cout << "Frame conversion is going on\n";
-                    Sleep(1); // Wait until the GPU is done
-                }
-                query->Release();
-
-                SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
-            }
-            else {
-                std::cerr << "Frame conversion failed\n";
-            }
-
-            keyedMutex11->ReleaseSync(1);            // Release D3D11 access, signal D3D12 access
-            keyedMutex11->AcquireSync(1, 500);
-
-            hr = CopyNV12TextureToFile(d3d12Device, commandList, commandQueue, sharedTextureD3D12, L"d3d12_nv12_dump.yuv");
-
-
-            keyedMutex11->ReleaseSync(0);
-
-
-
-        outputDuplication->ReleaseFrame();
- */
 
     return sharedTextureD3D12;
 }
