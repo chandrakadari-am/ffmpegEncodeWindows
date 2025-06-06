@@ -7,7 +7,7 @@
 #include <va/va_win32.h>
 #include "sc_encoder_if.h"
 #include "videoProcessor.h"
-
+#include <d3d11_4.h>
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -81,6 +81,7 @@ public:
 	int CreateFactory();
 	ComPtr<ID3D12Resource> CaptureScreenD3D12(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12CommandQueue> commandQueue);
 	HRESULT InitializeD3D11Interop();
+	HRESULT ConfigFences(void);
 private:
 	void CheckvaQueryConfigProfiles();
 
@@ -95,10 +96,12 @@ private:
 	// Create a staging texture (CPU-readable) or shared handle for D3D12
 	//ComPtr<ID3D12Resource> d3d12Texture;
 	ComPtr<ID3D11Texture2D> sharedTextureD3D11;
-	ComPtr<ID3D12Resource> sharedTextureD3D12;
+	ComPtr<ID3D12Resource> sharedResorceD3D12;
 	ComPtr<ID3D11Texture2D> acquiredTexture;
 	ComPtr<IDXGIResource> desktopResource;
 	IDXGIResource* dxgiResource = nullptr;
+	ComPtr<IDXGIOutput1> dxgiOutput1;
+	ComPtr<IDXGIOutput> dxgiOutput;
 
 	ComPtr<IDXGIFactory4> m_factory;
 	ComPtr<IDXGIAdapter1> m_adapter;
@@ -110,10 +113,19 @@ private:
 	VASurfaceID m_vaRGBASurface = 0;
 	VASurfaceID m_VASurfaceNV12 = 0;
 	VASurfaceID m_VASurfaceNV12New = 0;
-	HANDLE m_renderSharedHandle = { nullptr };
+	HANDLE m_renderSharedHandle;// = { nullptr };
 
 	int m_width;
 	int m_height;
 
 	VideoProcessorNV12Converter converter;
+
+	// Globals for sync
+	ComPtr<ID3D12Fence> sharedFence;
+	ComPtr<ID3D11Fence> d3d11Fence;
+	UINT64 fenceValue;
+	HANDLE fenceEvent;
+	ComPtr<ID3D11DeviceContext4> d3d11Context4;
+	ComPtr<ID3D11Device5> d3d11Device5;
+
 };

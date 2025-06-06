@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
+#include <d3d11_4.h>
 #include <wrl.h>
 #include <chrono>
 #include <thread>
@@ -127,7 +128,7 @@ int ffmpegEncodeWin::CreateSurfaces() {
     createSurfacesAttribList1[1].type = VASurfaceAttribExternalBufferDescriptor;
     createSurfacesAttribList1[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
     createSurfacesAttribList1[1].value.type = VAGenericValueTypePointer;
-    createSurfacesAttribList1[1].value.value.p = static_cast<void*>(vaHandles);
+    createSurfacesAttribList1[1].value.value.p = vaHandles;//static_cast<void*>(vaHandles);
 
     createSurfacesAttribList1[2].type = VASurfaceAttribPixelFormat;
     createSurfacesAttribList1[2].flags = VA_SURFACE_ATTRIB_SETTABLE;
@@ -149,8 +150,6 @@ int ffmpegEncodeWin::CreateSurfaces() {
 HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
     if (initialized) return S_OK;
 
-
-
     UINT flags = 0;
     HRESULT hr;
     hr = CreateDXGIFactory2(flags, IID_PPV_ARGS(&m_factory));
@@ -168,11 +167,10 @@ HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
     if (FAILED(hr)) return hr;
 
     // Get DXGI output (first output of first adapter)
-    ComPtr<IDXGIOutput> dxgiOutput;
     hr = m_adapter->EnumOutputs(0, &dxgiOutput);
     if (FAILED(hr)) return hr;
 
-    ComPtr<IDXGIOutput1> dxgiOutput1;
+
     hr = dxgiOutput.As(&dxgiOutput1);
     if (FAILED(hr)) return hr;
 
@@ -211,12 +209,6 @@ HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
         return hr;
     }
 
-    if (!converter.Initialize(d3d11Device.Get(), d3d11Context.Get(), m_width, m_height)) {
-        std::cerr << "Init failed\n";
-        hr = -1;
-        return hr;
-    }
-
     // acquire a frame to get screen co-ordinates
     DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
     hr = outputDuplication->AcquireNextFrame(1000, &frameInfo, &desktopResource);
@@ -233,6 +225,13 @@ HRESULT ffmpegEncodeWin::InitializeD3D11Interop() {
     m_width = desc.Width;
     m_height = desc.Height;
     outputDuplication->ReleaseFrame();
+
+    if (!converter.Initialize(d3d11Device.Get(), d3d11Context.Get(), m_width, m_height)) {
+        std::cerr << "Init failed\n";
+        hr = -1;
+        return hr;
+    }
+
 
     initialized = true;
     return S_OK;
@@ -251,8 +250,9 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     texDesc.Format = DXGI_FORMAT_NV12;  // NV12 format for video frames
     texDesc.SampleDesc.Count = 1;
     texDesc.Usage = D3D11_USAGE_DEFAULT;
-    texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;//0;                  // NV12 is typically not bindable as render target
-    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;//D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;//0;                  // NV12 is typically not bindable as render target
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;//D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
+    texDesc.CPUAccessFlags = 0;
 
     HRESULT hr = d3d11Device->CreateTexture2D(&texDesc, nullptr, &sharedTextureD3D11);
     if (FAILED(hr)) {
@@ -276,7 +276,7 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
 
     // Open the shared handle in D3D12 device
     //hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)&sharedTextureD3D12);
-    hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)sharedTextureD3D12.ReleaseAndGetAddressOf());
+    hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)sharedResorceD3D12.ReleaseAndGetAddressOf());
     if (FAILED(hr)) {
         std::cerr << "Failed to open shared handle\n";
         return nullptr;
@@ -285,8 +285,6 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
         std::cout << "ERROR >>>>>>> " << std::endl;
         return nullptr;
     }
-    //ComPtr<IDXGIKeyedMutex> keyedMutex11;
-    ///hr = sharedTextureD3D11.As(&keyedMutex11);
 
     if (FAILED(hr)) {
         std::cerr << "Failed to get IDXGIKeyedMutex from sharedTextureD3D12\n";
@@ -295,17 +293,11 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
 
 
 
-    return sharedTextureD3D12;
+    return sharedResorceD3D12;
 }
 
 
 int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
-
-    // workout how to get frame size before creating D3D11 Textures and shared resources
-    // set it for now
-    m_width = 1920;
-    m_height = 1200;
-
 
     InitializeD3D11Interop();
     CaptureScreenD3D12(d3d12Device, commandQueue);
@@ -335,12 +327,83 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
     return 0;
 }
 
+HRESULT ffmpegEncodeWin::ConfigFences(void) {
+    HRESULT hr;
+    // SDK needed: Windows 10 SDK 10.0.14393+
+
+    fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    fenceValue = 1;
+
+    // Check for D3D11 fence support
+    D3D11_FEATURE_DATA_D3D11_OPTIONS5 featureOptions5 = {};
+    ComPtr<ID3D11DeviceContext1> d3d11Context1;
+    d3d11Context.As(&d3d11Context1);
+
+    bool isSharedFenceSupported = false; // or false, if you want to disable on unknown systems
+
+    hr = d3d11Device->CheckFeatureSupport(
+        D3D11_FEATURE_D3D11_OPTIONS5,
+        &featureOptions5,
+        sizeof(featureOptions5)
+    );
+
+    if (SUCCEEDED(d3d11Device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS5, &featureOptions5, sizeof(featureOptions5)))) {
+        isSharedFenceSupported = true;
+    }
+
+    if (!isSharedFenceSupported) {
+        std::cerr << "WARNING: Assuming shared fences are unsupported.\n";
+    }
+
+    // Create D3D12 fence
+    hr = d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&sharedFence));
+    if (FAILED(hr)) {
+        std::cerr << "ERROR: Failed to create D3D12 fence\n";
+        return hr;
+    }
+
+    // Export D3D12 fence to shared handle
+    HANDLE sharedFenceHandle = nullptr;
+    hr = d3d12Device->CreateSharedHandle(
+        sharedFence.Get(),
+        nullptr,
+        GENERIC_ALL,
+        nullptr,
+        &sharedFenceHandle
+    );
+    if (FAILED(hr)) {
+        std::cerr << "ERROR: Failed to create shared fence handle\n";
+        return hr;
+    }
+
+    hr = d3d11Device.As(&d3d11Device5);
+    if (FAILED(hr)) {
+        std::cerr << "Failed to get ID3D11Device5 interface.\n";
+        return hr;
+    }
+
+    hr = d3d11Device5->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence));
+    CloseHandle(sharedFenceHandle); // Safe to close after import
+    if (FAILED(hr)) {
+        std::cerr << "OpenSharedFence failed: " << std::hex << hr << std::endl;
+        return hr;
+    }
+
+    hr = d3d11Context.As(&d3d11Context4);
+    if (FAILED(hr)) {
+        std::cerr << "Failed to query ID3D11DeviceContext4.\n";
+        return hr;
+    }
+}
+
 int ffmpegEncodeWin::EncodedLoop(void)
 {
     HRESULT hr;
     bool encodeFlag = true;
 
-    for (int frameCount = 0; frameCount < 1; ++frameCount) {
+    ConfigFences();
+
+    for (int frameCount = 0; frameCount < 5; ++frameCount) {
 
         std::cout << "Capturing frame +++++++ " << frameCount << std::endl;
 
@@ -372,8 +435,36 @@ int ffmpegEncodeWin::EncodedLoop(void)
             }
             query->Release();
 
+            // Get texture desc
+            D3D11_TEXTURE2D_DESC desc = {};
+            sharedTextureD3D11->GetDesc(&desc);
+            std::cout << "sharedTextureD3D11 Format: " << desc.Format << " " << DXGI_FORMAT_NV12 <<  std::endl;
+            D3D12_RESOURCE_DESC d3d12Desc = sharedResorceD3D12->GetDesc();
+            std::cout << "sharedTextureD3D12 Format: " << d3d12Desc.Format << " " << DXGI_FORMAT_NV12 << std::endl;
+
+
+            // Signal the shared fence from D3D11
+            hr = d3d11Context4->Signal(d3d11Fence.Get(), fenceValue);
+            if (FAILED(hr)) {
+                std::cerr << "Failed to signal D3D11 fence.\n";
+                //return hr;
+            }
+
+            // Wait in D3D12 for fenceValue
+            if (sharedFence->GetCompletedValue() < fenceValue) {
+                hr = sharedFence->SetEventOnCompletion(fenceValue, fenceEvent);
+                if (FAILED(hr)) {
+                    std::cerr << "ERROR: SetEventOnCompletion failed\n";
+                }
+                WaitForSingleObject(fenceEvent, INFINITE);
+            }
+            fenceValue++;  // Increment for next frame
+
+
+
             SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
 
+            // D3D12 shared resource access starts here
             // encode captured frame, d3d11Texture maps to vaSurfaces via D3D12 resource
             // somehow this is not happening - #TODO debug
             if (encodeFlag) {
@@ -386,9 +477,10 @@ int ffmpegEncodeWin::EncodedLoop(void)
                 DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after_enc.yuv");
 
                 if (frameCount == 0) {
-                    hr = CopyNV12TextureToFile(d3d12Device, commandList, commandQueue, sharedTextureD3D12, L"d3d12_nv12_dump.yuv");
+                    hr = CopyNV12TextureToFile(d3d12Device, commandList, commandQueue, sharedResorceD3D12, L"d3d12_nv12_dump.yuv");
                 }
             }
+            // D3D12 shared resource access ends here
         }
         else {
             std::cerr << "Frame conversion failed\n";
