@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi1_2.h>
+//#include <d3d11_1.h>
 #include <wrl.h>
 #include <chrono>
 #include <thread>
@@ -138,7 +139,6 @@ int ffmpegEncodeWin::CreateSurfaces() {
 
 
     VASurfaceAttrib createSurfacesAttribList1[3] = {};
-    //ID3D12Resource* resources[] = { d3d12Texture.Get() };
     HANDLE vaHandles[] = { m_renderSharedHandle };
 
     createSurfacesAttribList1[0].type = VASurfaceAttribMemoryType;
@@ -258,7 +258,7 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     texDesc.SampleDesc.Count = 1;
     texDesc.Usage = D3D11_USAGE_DEFAULT;
     texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;//0;                  // NV12 is typically not bindable as render target
-    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
 
     HRESULT hr = d3d11Device->CreateTexture2D(&texDesc, nullptr, &sharedTextureD3D11);
     if (FAILED(hr)) {
@@ -273,7 +273,6 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
         return nullptr;
     }
 
-    //HANDLE sharedHandle = nullptr;
     hr = dxgiResource->GetSharedHandle(&m_renderSharedHandle);
     dxgiResource->Release();
     if (FAILED(hr) || m_renderSharedHandle == nullptr) {
@@ -282,50 +281,85 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     }
 
     // Open the shared handle in D3D12 device
-    hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)&sharedTextureD3D12);
+    //hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)&sharedTextureD3D12);
+    hr = d3d12Device->OpenSharedHandle(m_renderSharedHandle, __uuidof(ID3D12Resource), (void**)sharedTextureD3D12.ReleaseAndGetAddressOf());
+    if (FAILED(hr)) {
+        std::cerr << "Failed to open shared handle\n";
+        return nullptr;
+    }
     if (FAILED(hr)) {
         std::cout << "ERROR >>>>>>> " << std::endl;
         return nullptr;
     }
+    ComPtr<IDXGIKeyedMutex> keyedMutex11;
+    hr = sharedTextureD3D11.As(&keyedMutex11);
 
-    // Try to acquire next frame
-    DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
-    hr = outputDuplication->AcquireNextFrame(100, &frameInfo, &desktopResource);
     if (FAILED(hr)) {
-        std::cout << "ERROR >>>>>>> " << std::endl;
+        std::cerr << "Failed to get IDXGIKeyedMutex from sharedTextureD3D12\n";
         return nullptr;
     }
 
-    // Get D3D11 texture
-    desktopResource.As(&acquiredTexture);
+
+/*
+        // Try to acquire next frame
+        DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
+        hr = outputDuplication->AcquireNextFrame(1000, &frameInfo, &desktopResource);
+        if (FAILED(hr)) {
+            std::cout << "ERROR >>>>>>> " << std::endl;
+            return nullptr;
+        }
+
+        // Get D3D11 texture
+        desktopResource.As(&acquiredTexture);
 
 
-    if (converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11)) {
-        SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
-    }
-    else {
-        std::cerr << "Frame conversion failed\n";
-    }
+        if (SUCCEEDED(hr)) {
+            keyedMutex11->AcquireSync(0, 500);  // Acquire D3D11 access
+            
+            // ... write/copy frame to sharedTextureD3D11
+            if (converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11)) {
+                d3d11Context->Flush();   // Push to GPU
 
-    d3d11Context->Flush();
+                // Wait for GPU to finish processing
+                ID3D11Query* query = nullptr;
+                D3D11_QUERY_DESC qdesc = {};
+                qdesc.Query = D3D11_QUERY_EVENT;
+                d3d11Device->CreateQuery(&qdesc, &query);
 
-    // Copy the acquired frame into your shared texture - GPU-side copy
-    // sharedTextureD3D11 and its corresponding opened shared resource in D3D12 (sharedTextureD3D12) 
-    // both reference the same GPU memory containing the captured frame.
-    //d3d11Context->CopyResource(sharedTextureD3D11.Get(), acquiredTexture.Get());
+                d3d11Context->End(query);  // Signal event
+                while (S_OK != d3d11Context->GetData(query, nullptr, 0, 0)) {
+                    std::cout << "Frame conversion is going on\n";
+                    Sleep(1); // Wait until the GPU is done
+                }
+                query->Release();
 
-    // Get texture desc
-    D3D11_TEXTURE2D_DESC desc = {};
-    acquiredTexture->GetDesc(&desc);
+                SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
+            }
+            else {
+                std::cerr << "Frame conversion failed\n";
+            }
 
-    outputDuplication->ReleaseFrame();
-    return d3d12Texture;
+            keyedMutex11->ReleaseSync(1);            // Release D3D11 access, signal D3D12 access
+            keyedMutex11->AcquireSync(1, 500);
+
+            hr = CopyNV12TextureToFile(d3d12Device, commandList, commandQueue, sharedTextureD3D12, L"d3d12_nv12_dump.yuv");
+
+
+            keyedMutex11->ReleaseSync(0);
+
+
+
+        outputDuplication->ReleaseFrame();
+ */
+
+    return sharedTextureD3D12;
 }
 
 
 int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
 
-
+    // workout how to get frame size before creating D3D11 Textures and shared resources
+    // set it for now
     m_width = 1920;
     m_height = 1200;
 
@@ -351,34 +385,74 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
     DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_before.yuv");
     FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
     DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after.yuv");
+    vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
 
     EncodedLoop();
 
     return 0;
 }
 
-
-
-
 int ffmpegEncodeWin::EncodedLoop(void)
 {
+    HRESULT hr;
     bool encodeFlag = true;
 
-    d3d11Context->Flush();
+    for (int frameCount = 0; frameCount < 1; ++frameCount) {
 
-    for (int frameCount = 0; frameCount < 30; ++frameCount) {
+        std::cout << "Capturing frame +++++++ " << frameCount << std::endl;
 
-        // encode captured frame, d3d11Texture maps to vaSurfaces[0] via D3D12 resource
-        // somehow this is not happening - #TODO debug
-        if (encodeFlag) {
-            if (frameCount == 0) {
-
-                DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump.yuv");
-            }
-            vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
-            ScEncodeFrames(reinterpret_cast<void*>(static_cast<uintptr_t>(m_VASurfaceNV12New)), true);
-            DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after_enc.yuv");
+        // Try to acquire next frame
+        DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
+        hr = outputDuplication->AcquireNextFrame(1000, &frameInfo, &desktopResource);
+        if (FAILED(hr)) {
+            std::cout << "ERROR >>>>>>> " << std::endl;
+            continue;
         }
+
+        // Get D3D11 texture
+        desktopResource.As(&acquiredTexture);
+
+        // convert and write frame to sharedTextureD3D11
+        if (converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11)) {
+            d3d11Context->Flush();   // Push to GPU
+
+            // Wait for GPU to finish processing
+            ID3D11Query* query = nullptr;
+            D3D11_QUERY_DESC qdesc = {};
+            qdesc.Query = D3D11_QUERY_EVENT;
+            d3d11Device->CreateQuery(&qdesc, &query);
+
+            d3d11Context->End(query);  // Signal event
+            while (S_OK != d3d11Context->GetData(query, nullptr, 0, 0)) {
+                std::cout << "Frame conversion is going on\n";
+                Sleep(1); // Wait until the GPU is done
+            }
+            query->Release();
+
+            SaveNV12TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump.yuv");
+
+            // encode captured frame, d3d11Texture maps to vaSurfaces via D3D12 resource
+            // somehow this is not happening - #TODO debug
+            if (encodeFlag) {
+                if (frameCount == 0) {
+
+                    DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump.yuv");
+                }
+                vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
+                ScEncodeFrames(reinterpret_cast<void*>(static_cast<uintptr_t>(m_VASurfaceNV12New)), true);
+                DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after_enc.yuv");
+
+                if (frameCount == 0) {
+                    hr = CopyNV12TextureToFile(d3d12Device, commandList, commandQueue, sharedTextureD3D12, L"d3d12_nv12_dump.yuv");
+                }
+            }
+        }
+        else {
+            std::cerr << "Frame conversion failed\n";
+        }
+
+
+        outputDuplication->ReleaseFrame();
 
     } 
 

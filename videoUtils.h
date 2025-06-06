@@ -37,4 +37,12 @@ bool SaveD3D12NV12TextureToFile(
     UINT height,
     const std::wstring& filePath
 );
+
+HRESULT CopyNV12TextureToFile(
+    ComPtr<ID3D12Device> d3d12Device,
+    ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
+    ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+    ComPtr<ID3D12Resource> sharedTextureD3D12,
+    const std::wstring& outputFilePath
+);
 bool CopyVaSurfaceManual(VADisplay vaDisplay, VASurfaceID src, VASurfaceID dst, int width, int height);

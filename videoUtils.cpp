@@ -17,6 +17,7 @@ using namespace Microsoft::WRL;
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 
+
 #include <va/va.h>
 #include <va/va_enc_h264.h>
 
@@ -463,8 +464,14 @@ void FillVaSurfaceWithRed(VADisplay vaDisplay, VASurfaceID vaSurface, int width,
     for (int y = 0; y < height / 2; ++y) {
         for (int x = 0; x < width; x += 2) {
             uint8_t* uv = uvPlane + y * image.pitches[1] + x;
-            uv[0] = 84;   // U
-            uv[1] = 255;  // V
+            if (x < (width / 2)) {
+                uv[0] = 84;   // U
+                uv[1] = 255;  // V
+            }
+            else {
+                uv[0] = 240;   // U
+                uv[1] = 110;  // V
+            }
         }
     }
 
@@ -642,6 +649,143 @@ bool CopyVaSurfaceManual11(VADisplay vaDisplay, VASurfaceID src, VASurfaceID dst
 
     return true;
 }
+
+HRESULT CopyNV12TextureToFile(
+    ComPtr<ID3D12Device> d3d12Device,
+    ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
+    ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+    ComPtr<ID3D12Resource> sharedTextureD3D12,
+    const std::wstring& outputFilePath
+) {
+    if (!d3d12Device || !d3d12CommandList || !d3d12CommandQueue || !sharedTextureD3D12) {
+        return E_INVALIDARG;
+    }
+
+    D3D12_RESOURCE_DESC texDesc = sharedTextureD3D12->GetDesc();
+    UINT width = static_cast<UINT>(texDesc.Width);
+    UINT height = texDesc.Height;
+
+    std::cout << "D3D12 Shared Frame SIZE: " << width << " x " << height << std::endl;
+
+    // Two subresources: 0 = Y, 1 = UV
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2];
+    UINT64 rowSizesInBytes[2];
+    UINT numRows[2];
+    UINT64 totalBytes = 0;
+
+    d3d12Device->GetCopyableFootprints(
+        &texDesc,
+        0,
+        2,
+        0,
+        footprints,
+        numRows,
+        rowSizesInBytes,
+        &totalBytes
+    );
+
+    // Create readback buffer for both planes
+    D3D12_RESOURCE_DESC readbackDesc = {};
+    readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    readbackDesc.Width = totalBytes;
+    readbackDesc.Height = 1;
+    readbackDesc.DepthOrArraySize = 1;
+    readbackDesc.MipLevels = 1;
+    readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+    readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    readbackDesc.SampleDesc.Count = 1;
+
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+    heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+    heapProps.CreationNodeMask = 1;
+    heapProps.VisibleNodeMask = 1;
+
+    ComPtr<ID3D12Resource> readbackBuffer;
+    HRESULT hr = d3d12Device->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &readbackDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&readbackBuffer)
+    );
+    if (FAILED(hr)) return hr;
+
+    // Copy both subresources: Y and UV
+    for (UINT plane = 0; plane < 2; ++plane) {
+        D3D12_TEXTURE_COPY_LOCATION src = {};
+        src.pResource = sharedTextureD3D12.Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.SubresourceIndex = plane;
+
+        D3D12_TEXTURE_COPY_LOCATION dst = {};
+        dst.pResource = readbackBuffer.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dst.PlacedFootprint = footprints[plane];
+
+        d3d12CommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+
+    hr = d3d12CommandList->Close();
+    if (FAILED(hr)) return hr;
+
+    ID3D12CommandList* commandLists[] = { d3d12CommandList.Get() };
+    d3d12CommandQueue->ExecuteCommandLists(1, commandLists);
+
+    // Synchronize with fence
+    ComPtr<ID3D12Fence> fence;
+    UINT64 fenceValue = 1;
+    hr = d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+    if (FAILED(hr)) return hr;
+
+    HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (!fenceEvent) return HRESULT_FROM_WIN32(GetLastError());
+
+    hr = d3d12CommandQueue->Signal(fence.Get(), fenceValue);
+    if (FAILED(hr)) {
+        CloseHandle(fenceEvent);
+        return hr;
+    }
+
+    if (fence->GetCompletedValue() < fenceValue) {
+        fence->SetEventOnCompletion(fenceValue, fenceEvent);
+        WaitForSingleObject(fenceEvent, INFINITE);
+    }
+    CloseHandle(fenceEvent);
+
+    // Map and write both planes
+    void* mappedData = nullptr;
+    hr = readbackBuffer->Map(0, nullptr, &mappedData);
+    if (FAILED(hr)) return hr;
+
+    std::ofstream outFile(outputFilePath, std::ios::binary);
+    if (!outFile) {
+        readbackBuffer->Unmap(0, nullptr);
+        return E_FAIL;
+    }
+
+    // Write Y plane
+    const uint8_t* yPlane = reinterpret_cast<uint8_t*>(mappedData) + footprints[0].Offset;
+    for (UINT y = 0; y < height; ++y) {
+        outFile.write(reinterpret_cast<const char*>(yPlane + y * footprints[0].Footprint.RowPitch), width);
+    }
+
+    // Write UV plane (interleaved, half height)
+    const uint8_t* uvPlane = reinterpret_cast<uint8_t*>(mappedData) + footprints[1].Offset;
+    for (UINT y = 0; y < height / 2; ++y) {
+        outFile.write(reinterpret_cast<const char*>(uvPlane + y * footprints[1].Footprint.RowPitch), width);
+    }
+
+    outFile.close();
+    readbackBuffer->Unmap(0, nullptr);
+
+    std::wcout << L"NV12 texture copied and saved to file: " << outputFilePath << std::endl;
+    return S_OK;
+}
+
+
 
 
 

@@ -93,9 +93,9 @@ private:
 	ComPtr<ID3D12CommandAllocator> commandAllocator;
 	ComPtr<ID3D12GraphicsCommandList> commandList;
 	// Create a staging texture (CPU-readable) or shared handle for D3D12
-	ComPtr<ID3D12Resource> d3d12Texture;
+	//ComPtr<ID3D12Resource> d3d12Texture;
 	ComPtr<ID3D11Texture2D> sharedTextureD3D11;
-	ID3D12Resource* sharedTextureD3D12 = nullptr;
+	ComPtr<ID3D12Resource> sharedTextureD3D12;
 	ComPtr<ID3D11Texture2D> acquiredTexture;
 	ComPtr<IDXGIResource> desktopResource;
 	IDXGIResource* dxgiResource = nullptr;
