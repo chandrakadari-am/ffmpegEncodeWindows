@@ -21,6 +21,12 @@ using namespace Microsoft::WRL;
 #include <va/va.h>
 #include <va/va_enc_h264.h>
 
+
+void DumpD3D1TextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* texture, const std::string& filename, bool isNVFormat);
+void DumpVaSurfaceToFile(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, const std::string& filename, bool isNVFormat);
+void DumpD3D12ResourceToFile(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12GraphicsCommandList> d3d12CommandList, ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+    ComPtr<ID3D12Resource> resourceD3D12, const std::string& filename, bool isNVFormat);
+
 void DumpVaSurfaceToNV12File(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, const std::string& filename);
 void FillVaSurfaceWithRed(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height);
 void FillVaSurfaceWithRedOld(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height);
@@ -43,6 +49,21 @@ HRESULT CopyNV12TextureToFile(
     ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
     ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
     ComPtr<ID3D12Resource> sharedTextureD3D12,
-    const std::wstring& outputFilePath
+    const std::string& outputFilePath
 );
 bool CopyVaSurfaceManual(VADisplay vaDisplay, VASurfaceID src, VASurfaceID dst, int width, int height);
+HRESULT SaveBGRATextureToFile(
+    ID3D11Device* d3d11Device,
+    ID3D11DeviceContext* d3d11Context,
+    ID3D11Texture2D* texture,
+    const std::string& filePath);
+HRESULT CopyD3D12BGRATextureToFile(
+    ComPtr<ID3D12Device> d3d12Device,
+    ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
+    ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+    ComPtr<ID3D12Resource> texture,
+    const std::string& outputFilePath);
+void DumpVaSurfaceToBGRAFile(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, std::string& filename);
+
+
+

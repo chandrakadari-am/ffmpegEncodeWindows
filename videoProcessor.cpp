@@ -124,6 +124,17 @@ bool VideoProcessorNV12Converter::Convert(ID3D11Texture2D* inputBgra, ID3D11Text
     return true;
 }
 
+bool VideoProcessorNV12Converter::Copy(ID3D11Texture2D* inputBgra, ID3D11Texture2D* outputBgra) {
+    if (!inputBgra || !outputBgra) return false;
+
+    // Just copy the entire resource from input to output
+    m_context->CopyResource(outputBgra, inputBgra);
+
+    // Optionally flush the context to ensure copy completion
+    m_context->Flush();
+
+    return true;
+}
 
 bool VideoProcessorNV12Converter::ConvertOld(ID3D11Texture2D* inputBgra, ID3D11Texture2D** outputNv12) {
     if (!inputBgra || !outputNv12) return false;

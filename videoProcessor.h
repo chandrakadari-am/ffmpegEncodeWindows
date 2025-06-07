@@ -11,6 +11,7 @@ public:
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context, int width, int height);
     bool Convert(ID3D11Texture2D* inputBgra, ID3D11Texture2D** outputNv12);
     bool ConvertOld(ID3D11Texture2D* inputBgra, ID3D11Texture2D** outputNv12);
+    bool Copy(ID3D11Texture2D* inputBgra, ID3D11Texture2D* outputBgra);
 private:
     ComPtr<ID3D11Device> m_device;
     ComPtr<ID3D11DeviceContext> m_context;

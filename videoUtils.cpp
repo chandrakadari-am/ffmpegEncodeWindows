@@ -16,11 +16,48 @@ using namespace Microsoft::WRL;
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
-
-
 #include <va/va.h>
 #include <va/va_enc_h264.h>
+#include "videoUtils.h"
 
+void DumpD3D1TextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* texture, const std::string& filename, bool isNVFormat) {
+    std::string file;
+    if (isNVFormat) {
+        file = filename + ".yuv";
+        SaveNV12TextureToFile(device, context, texture, file);
+    }
+    else {
+        file = filename + ".bgra";
+        SaveBGRATextureToFile(device, context, texture, file);
+    }
+}
+
+void DumpVaSurfaceToFile(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, const std::string& filename, bool isNVFormat) {
+    std::string file;
+    if (isNVFormat) {
+        file = filename + ".yuv";
+        DumpVaSurfaceToNV12File(vaDisplay, vaSurface, width, height, file);
+    }
+    else {
+        file = filename + ".bgra";
+        DumpVaSurfaceToBGRAFile(vaDisplay, vaSurface, width, height, file);
+    }
+}
+
+
+
+void DumpD3D12ResourceToFile(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12GraphicsCommandList> d3d12CommandList, ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+             ComPtr<ID3D12Resource> resourceD3D12, const std::string& filename, bool isNVFormat) {
+    std::string file;
+    if (isNVFormat) {
+        file = filename + ".yuv";
+        CopyNV12TextureToFile(d3d12Device, d3d12CommandList, d3d12CommandQueue, resourceD3D12, file);
+    }
+    else {
+        file = filename + ".bgra";
+        CopyD3D12BGRATextureToFile(d3d12Device, d3d12CommandList, d3d12CommandQueue, resourceD3D12, file);
+    }
+}
 
 void DumpVaSurfaceToNV12File(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, const std::string& filename) {
     VAImage vaImage;
@@ -40,7 +77,7 @@ void DumpVaSurfaceToNV12File(VADisplay vaDisplay, VASurfaceID vaSurface, int wid
     //va_status = vaDeriveImage(vaDisplay, vaSurface, &vaImage);
     {
         VAImageFormat nv12Format = {};
-        nv12Format.fourcc = VA_FOURCC_NV12;
+        nv12Format.fourcc = VA_FOURCC_RGBX;//VA_FOURCC_NV12;
         nv12Format.byte_order = VA_LSB_FIRST;
         nv12Format.bits_per_pixel = 12; // NV12 is 12 bits per pixel (8 for Y + 4 for UV)
         nv12Format.depth = 8;           // 8 bits per component
@@ -221,6 +258,60 @@ bool SaveD3D12NV12TextureToFile(
     return true;
 }
 
+HRESULT SaveBGRATextureToFile(
+    ID3D11Device* d3d11Device,
+    ID3D11DeviceContext* d3d11Context,
+    ID3D11Texture2D* texture,
+    const std::string& filePath)
+{
+    if (!d3d11Device || !texture) return E_INVALIDARG;
+
+    D3D11_TEXTURE2D_DESC desc;
+    texture->GetDesc(&desc);
+
+    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        std::cerr << "Unsupported format. Expected DXGI_FORMAT_B8G8R8A8_UNORM\n";
+        return E_FAIL;
+    }
+
+    // Create a staging texture for CPU readback
+    D3D11_TEXTURE2D_DESC stagingDesc = desc;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.BindFlags = 0;
+    stagingDesc.MiscFlags = 0;
+
+    ComPtr<ID3D11Texture2D> stagingTex;
+    HRESULT hr = d3d11Device->CreateTexture2D(&stagingDesc, nullptr, &stagingTex);
+    if (FAILED(hr)) return hr;
+
+    // Copy the GPU texture to the staging texture
+    d3d11Context->CopyResource(stagingTex.Get(), texture);
+
+    // Map it to CPU memory
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = d3d11Context->Map(stagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) return hr;
+
+    std::ofstream outFile(filePath, std::ios::binary);
+    if (!outFile) {
+        d3d11Context->Unmap(stagingTex.Get(), 0);
+        return E_FAIL;
+    }
+
+    // Write each row, handling row pitch
+    for (UINT y = 0; y < desc.Height; ++y) {
+        const uint8_t* rowData = reinterpret_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch;
+        outFile.write(reinterpret_cast<const char*>(rowData), desc.Width * 4);  // 4 bytes per pixel (BGRA)
+    }
+
+    outFile.close();
+    d3d11Context->Unmap(stagingTex.Get(), 0);
+
+    std::cout << "BGRA texture dumped to file: " << filePath << std::endl;
+    return S_OK;
+}
+
 
 bool SaveNV12TextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Texture2D* nv12Texture, const std::string& filename) {
     if (!nv12Texture) return false;
@@ -288,6 +379,171 @@ bool SaveNV12TextureToFile(ID3D11Device* device, ID3D11DeviceContext* context, I
     std::cout << "[OK] Saved NV12 frame to " << filename << std::endl;
     return true;
 }
+
+HRESULT CopyD3D12BGRATextureToFile(
+    ComPtr<ID3D12Device> d3d12Device,
+    ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
+    ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
+    ComPtr<ID3D12Resource> texture,
+    const std::string& outputFilePath)
+{
+    if (!d3d12Device || !d3d12CommandList || !d3d12CommandQueue || !texture) {
+        return E_INVALIDARG;
+    }
+
+    D3D12_RESOURCE_DESC desc = texture->GetDesc();
+    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        std::wcerr << L"Unsupported format. Expected DXGI_FORMAT_B8G8R8A8_UNORM\n";
+        return E_FAIL;
+    }
+
+    UINT width = static_cast<UINT>(desc.Width);
+    UINT height = desc.Height;
+
+    std::wcout << L"Dumping BGRA D3D12 texture: " << width << L"x" << height << std::endl;
+
+    // Get footprint
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 totalBytes = 0;
+    d3d12Device->GetCopyableFootprints(
+        &desc,
+        0,
+        1,
+        0,
+        &footprint,
+        nullptr,
+        nullptr,
+        &totalBytes
+    );
+
+    // Create readback buffer
+    D3D12_RESOURCE_DESC readbackDesc = {};
+    readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    readbackDesc.Width = totalBytes;
+    readbackDesc.Height = 1;
+    readbackDesc.DepthOrArraySize = 1;
+    readbackDesc.MipLevels = 1;
+    readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+    readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    readbackDesc.SampleDesc.Count = 1;
+
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+
+    ComPtr<ID3D12Resource> readbackBuffer;
+    HRESULT hr = d3d12Device->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &readbackDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&readbackBuffer)
+    );
+    if (FAILED(hr)) return hr;
+
+    // Copy texture into readback buffer
+    D3D12_TEXTURE_COPY_LOCATION src = {};
+    src.pResource = texture.Get();
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION dst = {};
+    dst.pResource = readbackBuffer.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst.PlacedFootprint = footprint;
+
+    d3d12CommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    hr = d3d12CommandList->Close();
+    if (FAILED(hr)) return hr;
+
+    ID3D12CommandList* commandLists[] = { d3d12CommandList.Get() };
+    d3d12CommandQueue->ExecuteCommandLists(1, commandLists);
+
+    // Synchronize with fence
+    ComPtr<ID3D12Fence> fence;
+    hr = d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+    if (FAILED(hr)) return hr;
+
+    HANDLE fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    if (!fenceEvent) return HRESULT_FROM_WIN32(GetLastError());
+
+    UINT64 fenceValue = 1;
+    d3d12CommandQueue->Signal(fence.Get(), fenceValue);
+
+    if (fence->GetCompletedValue() < fenceValue) {
+        fence->SetEventOnCompletion(fenceValue, fenceEvent);
+        WaitForSingleObject(fenceEvent, INFINITE);
+    }
+    CloseHandle(fenceEvent);
+
+    // Map and write to file
+    void* mappedData = nullptr;
+    hr = readbackBuffer->Map(0, nullptr, &mappedData);
+    if (FAILED(hr)) return hr;
+
+    std::ofstream outFile(outputFilePath, std::ios::binary);
+    if (!outFile) {
+        readbackBuffer->Unmap(0, nullptr);
+        return E_FAIL;
+    }
+
+    uint8_t* srcPtr = static_cast<uint8_t*>(mappedData);
+    for (UINT y = 0; y < height; ++y) {
+        outFile.write(reinterpret_cast<const char*>(srcPtr + y * footprint.Footprint.RowPitch), width * 4);
+    }
+
+    outFile.close();
+    readbackBuffer->Unmap(0, nullptr);
+
+    std::cout << "Saved BGRA texture to: " << outputFilePath << std::endl;
+    return S_OK;
+}
+
+void DumpVaSurfaceToBGRAFile(VADisplay vaDisplay, VASurfaceID vaSurface, int width, int height, std::string& filename) {
+    VAImage image;
+    if (vaDeriveImage(vaDisplay, vaSurface, &image) != VA_STATUS_SUCCESS) {
+        std::cerr << "Failed to derive VA image\n";
+        return;
+    }
+
+    void* pBuffer = nullptr;
+    if (vaMapBuffer(vaDisplay, image.buf, &pBuffer) != VA_STATUS_SUCCESS) {
+        std::cerr << "Failed to map VA image buffer\n";
+        vaDestroyImage(vaDisplay, image.image_id);
+        return;
+    }
+
+    // image.data points to the surface pixel data in RGB32 format (usually BGRA)
+    uint8_t* srcData = (uint8_t*)pBuffer + image.offsets[0];
+    int pitch = image.pitches[0];  // bytes per row
+
+    // Open file for writing
+    std::ofstream outFile(filename, std::ios::binary);
+    if (!outFile) {
+        std::cerr << "Failed to open output file\n";
+        vaUnmapBuffer(vaDisplay, image.buf);
+        vaDestroyImage(vaDisplay, image.image_id);
+        return;
+    }
+
+    for (int y = 1000; y < 1016; ++y) {
+        if (y == 1000) printf("\n BGRA : ");
+        printf("%02X ", srcData[y]);
+    }
+
+    printf("\n");
+
+    // Write row by row because pitch may be larger than width * 4
+    for (int y = 0; y < height; ++y) {
+        outFile.write(reinterpret_cast<const char*>(srcData + y * pitch), width * 4);
+    }
+
+    std::cout << "Saved BGRA dump to " << filename << std::endl;
+
+    vaUnmapBuffer(vaDisplay, image.buf);
+    vaDestroyImage(vaDisplay, image.image_id);
+}
+
 
 
 void fillBGRAWithRed(uint8_t* buffer, int width, int height, int pitch) {
@@ -655,7 +911,7 @@ HRESULT CopyNV12TextureToFile(
     ComPtr<ID3D12GraphicsCommandList> d3d12CommandList,
     ComPtr<ID3D12CommandQueue> d3d12CommandQueue,
     ComPtr<ID3D12Resource> sharedTextureD3D12,
-    const std::wstring& outputFilePath
+    const std::string& outputFilePath
 ) {
     if (!d3d12Device || !d3d12CommandList || !d3d12CommandQueue || !sharedTextureD3D12) {
         return E_INVALIDARG;
@@ -781,7 +1037,7 @@ HRESULT CopyNV12TextureToFile(
     outFile.close();
     readbackBuffer->Unmap(0, nullptr);
 
-    std::wcout << L"NV12 texture copied and saved to file: " << outputFilePath << std::endl;
+    std::cout << "NV12 texture copied and saved to file: " << outputFilePath << std::endl;
     return S_OK;
 }
 

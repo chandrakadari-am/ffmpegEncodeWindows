@@ -78,7 +78,6 @@ public:
 	int FFMPEG_VAAPI_Debug();
 	int EncodedLoop(void);
 	int CreateSurfaces();
-	int CreateFactory();
 	ComPtr<ID3D12Resource> CaptureScreenD3D12(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12CommandQueue> commandQueue);
 	HRESULT InitializeD3D11Interop();
 	HRESULT ConfigFences(void);
@@ -93,10 +92,8 @@ private:
 	ComPtr<ID3D12CommandQueue> commandQueue;
 	ComPtr<ID3D12CommandAllocator> commandAllocator;
 	ComPtr<ID3D12GraphicsCommandList> commandList;
-	// Create a staging texture (CPU-readable) or shared handle for D3D12
-	//ComPtr<ID3D12Resource> d3d12Texture;
 	ComPtr<ID3D11Texture2D> sharedTextureD3D11;
-	ComPtr<ID3D12Resource> sharedResorceD3D12;
+	ComPtr<ID3D12Resource> sharedResourceD3D12;
 	ComPtr<ID3D11Texture2D> acquiredTexture;
 	ComPtr<IDXGIResource> desktopResource;
 	IDXGIResource* dxgiResource = nullptr;
@@ -127,5 +124,10 @@ private:
 	HANDLE fenceEvent;
 	ComPtr<ID3D11DeviceContext4> d3d11Context4;
 	ComPtr<ID3D11Device5> d3d11Device5;
+
+	bool isNVFormat;
+	int vaSurfaceFmt;
+	int vaDescFmt;
+	DXGI_FORMAT dxgiD3D11TextureFmt;
 
 };

@@ -38,6 +38,10 @@ def main():
     height = args.height
     output_path = args.output or os.path.splitext(input_path)[0] + ".png"
 
+    if not os.path.isfile(input_path):
+        print(f"Input file not found: {input_path}. Skipping conversion.")
+        sys.exit(0)  # Or return if you want to continue in larger app
+        
     nv12_to_png(input_path, width, height, output_path)
 
 if __name__ == "__main__":
