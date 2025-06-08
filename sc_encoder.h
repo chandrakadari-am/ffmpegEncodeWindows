@@ -8,6 +8,8 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/imgutils.h>
 #include <libswscale/swscale.h>
+#include <libavutil/hwcontext_vaapi.h>
+#include <libavutil/hwcontext.h>
 }
 #include "sc_encoder_if.h"
 //#include "shared/desktop/media/media_common.int.hpp"
@@ -92,18 +94,13 @@ enum AM_SC_ENCODING_TYPES {
 };
 
 typedef struct {
-    int32_t width;
-    int32_t height;
-    int32_t bitrate;
-    int32_t framerate;
-    int32_t codecUIIndex;
+    encIfConfig encIf;
+
+    // encoder specific params
+    enum AM_SC_ENCODING_TYPES encodingType;
     enum AVPixelFormat pixfmt;
     enum AVCodecID codecId;
-    uint32_t qualityMode;       // set codec bitrate based on quality mode
-    const AVCodec *selCodec;
-    enum AM_SC_ENCODING_TYPES encodingType;
-    uint32_t deviceType;
-    char hwDeviceTypeName[20];
+    const AVCodec* selCodec;
 } encConfig;
 
 class ScreenCaptureEncoder {

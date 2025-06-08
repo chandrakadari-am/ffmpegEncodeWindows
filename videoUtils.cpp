@@ -694,7 +694,7 @@ void FillVaSurfaceWithRed(VADisplay vaDisplay, VASurfaceID vaSurface, int width,
         std::cerr << "vaDeriveImage failed\n";
         return;
     }
-
+    static int cnt = 0;
     void* pData = nullptr;
     va_status = vaMapBuffer(vaDisplay, image.buf, &pData);
     if (va_status != VA_STATUS_SUCCESS || !pData) {
@@ -721,15 +721,16 @@ void FillVaSurfaceWithRed(VADisplay vaDisplay, VASurfaceID vaSurface, int width,
         for (int x = 0; x < width; x += 2) {
             uint8_t* uv = uvPlane + y * image.pitches[1] + x;
             if (x < (width / 2)) {
-                uv[0] = 84;   // U
+                uv[0] = (cnt)&255;  //84 // U
                 uv[1] = 255;  // V
             }
             else {
                 uv[0] = 240;   // U
-                uv[1] = 110;  // V
+                uv[1] = (cnt) & 255;  //110;  // V
             }
         }
     }
+    cnt+=2;
 
     vaUnmapBuffer(vaDisplay, image.buf);
     vaDestroyImage(vaDisplay, image.image_id);

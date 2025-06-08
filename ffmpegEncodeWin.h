@@ -79,6 +79,7 @@ public:
 	int EncodedLoop(void);
 	int CreateSurfaces();
 	ComPtr<ID3D12Resource> CaptureScreenD3D12(ComPtr<ID3D12Device> d3d12Device, ComPtr<ID3D12CommandQueue> commandQueue);
+	void CreateD3D12D3D1Sharing();
 	HRESULT InitializeD3D11Interop();
 	HRESULT ConfigFences(void);
 private:
@@ -111,6 +112,7 @@ private:
 	VASurfaceID m_VASurfaceNV12 = 0;
 	VASurfaceID m_VASurfaceNV12New = 0;
 	HANDLE m_renderSharedHandle;// = { nullptr };
+	HANDLE m_D3D12SharedHandle;
 
 	int m_width;
 	int m_height;

@@ -21,6 +21,10 @@ using namespace Microsoft::WRL;
 #include <va/va_enc_h264.h>
 #include "videoUtils.h"
 
+
+#include <va/va_drmcommon.h>
+#include <va/va_win32.h> 
+
 static void message_callback(void* user_context, const char* message)
 {
     printf("mc: %s\n", message);
@@ -110,8 +114,10 @@ int ffmpegEncodeWin::CreateSurfaces() {
         vaSetInfoCallback(m_vaDisplay, message_callback, 0);
         flag++;
     }
+
+
     VASurfaceAttrib createSurfacesAttribList1[3] = {};
-    HANDLE vaHandles[] = { m_renderSharedHandle };
+     HANDLE vaHandles[] = { m_renderSharedHandle };
 
     createSurfacesAttribList1[0].type = VASurfaceAttribMemoryType;
     createSurfacesAttribList1[0].flags = VA_SURFACE_ATTRIB_SETTABLE;
@@ -121,7 +127,7 @@ int ffmpegEncodeWin::CreateSurfaces() {
     createSurfacesAttribList1[1].type = VASurfaceAttribExternalBufferDescriptor;
     createSurfacesAttribList1[1].flags = VA_SURFACE_ATTRIB_SETTABLE;
     createSurfacesAttribList1[1].value.type = VAGenericValueTypePointer;
-    createSurfacesAttribList1[1].value.value.p = vaHandles;//static_cast<void*>(vaHandles);
+    createSurfacesAttribList1[1].value.value.p = vaHandles;
 
     createSurfacesAttribList1[2].type = VASurfaceAttribPixelFormat;
     createSurfacesAttribList1[2].flags = VA_SURFACE_ATTRIB_SETTABLE;
@@ -261,8 +267,8 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     texDesc.Format = dxgiD3D11TextureFmt;  // NV12 format for video frames
     texDesc.SampleDesc.Count = 1;
     texDesc.Usage = D3D11_USAGE_DEFAULT;
-    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;//D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;//0;                  // NV12 is typically not bindable as render target
-    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;//D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;    // NV12 is typically not bindable as render target
+    texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
     texDesc.CPUAccessFlags = 0;
 
     HRESULT hr = d3d11Device->CreateTexture2D(&texDesc, nullptr, &sharedTextureD3D11);
@@ -307,11 +313,69 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     return sharedResourceD3D12;
 }
 
+void ffmpegEncodeWin::CreateD3D12D3D1Sharing() {
+
+    std::cout << "CreateD3D12D3D1Sharing =========== " << std::endl;
+    HRESULT hr;
+    ComPtr<ID3D12Resource> d3d12Texture;
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;//DXGI_FORMAT_NV12;
+    desc.Width = m_width;
+    desc.Height = m_height;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+
+    D3D12_HEAP_PROPERTIES heapProps = {};
+    heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    hr = d3d12Device->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_SHARED,  // Important for sharing
+        &desc,
+        D3D12_RESOURCE_STATE_COMMON,
+        nullptr,
+        IID_PPV_ARGS(&d3d12Texture)
+    );
+
+
+    hr = d3d12Device->CreateSharedHandle(
+        d3d12Texture.Get(),
+        nullptr,
+        GENERIC_ALL,
+        nullptr,
+        &m_D3D12SharedHandle
+    );
+
+    ComPtr<ID3D11Device1> d3d11Device1;
+    hr = d3d11Device.As(&d3d11Device1);
+    if (FAILED(hr)) {
+        std::cerr << "Failed to query ID3D11Device1" << std::endl;
+        return;
+    }
+
+    hr = d3d11Device1->OpenSharedResource1(
+        m_D3D12SharedHandle,
+        IID_PPV_ARGS(&sharedTextureD3D11)
+    );
+
+    //hr = d3d11Device->OpenSharedResource(
+    //    m_D3D12SharedHandle,
+    //    IID_PPV_ARGS(&sharedTextureD3D11)
+    //);
+    //CloseHandle(sharedHandle); // Safe to close after importing
+
+}
+
 
 int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
 
     InitializeD3D11Interop();
     CaptureScreenD3D12(d3d12Device, commandQueue);
+    //CreateD3D12D3D1Sharing();
     CreateSurfaces();
 
     // Config and init ffmpeg encoder
@@ -324,14 +388,12 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
     cfg.qualityModeIndex = 0;
     cfg.osVersion = AM_SC_OS_VERSION_WINDOWS;
     cfg.deviceType = AV_HWDEVICE_TYPE_VAAPI;
+    cfg.vaDisplay = m_vaDisplay;
     strcpy_s(cfg.hwDeviceTypeName, sizeof(cfg.hwDeviceTypeName), "vaapi");
     ScEncoderConfigIF(&cfg);
 
-    //vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
-    //DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_before.yuv");
-    //FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
-    //DumpVaSurfaceToNV12File(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump_after.yuv");
-    //vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
+    FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
+    vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
 
     EncodedLoop();
 
@@ -414,58 +476,51 @@ int ffmpegEncodeWin::EncodedLoop(void)
 
     ConfigFences();
 
-    {
-        DXGI_ADAPTER_DESC desc11 = {}, desc12 = {};
-        ComPtr<IDXGIDevice> dxgiDevice11;
-        d3d11Device->QueryInterface(IID_PPV_ARGS(&dxgiDevice11));
 
-        ComPtr<IDXGIAdapter> adapter11;
-        dxgiDevice11->GetAdapter(&adapter11);
-        adapter11->GetDesc(&desc11);
+    DXGI_ADAPTER_DESC desc11 = {}, desc12 = {};
+    ComPtr<IDXGIDevice> dxgiDevice11;
+    d3d11Device->QueryInterface(IID_PPV_ARGS(&dxgiDevice11));
 
-        m_adapter->GetDesc(&desc12);  // m_adapter used for D3D12
+    ComPtr<IDXGIAdapter> adapter11;
+    dxgiDevice11->GetAdapter(&adapter11);
+    adapter11->GetDesc(&desc11);
 
-        std::wcout << L"D3D11 Adapter LUID: " << desc11.AdapterLuid.HighPart << L"-" << desc11.AdapterLuid.LowPart << std::endl;
-        std::wcout << L"D3D12 Adapter LUID: " << desc12.AdapterLuid.HighPart << L"-" << desc12.AdapterLuid.LowPart << std::endl;
+    m_adapter->GetDesc(&desc12);  // m_adapter used for D3D12
 
-
-        ComPtr<IDXGIResource> dxgiRes11;
-        sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&dxgiRes11));
-
-        HANDLE handle11 = nullptr;
-        dxgiRes11->GetSharedHandle(&handle11);
-
-        ComPtr<IDXGIResource> dxgiRes12;
-        sharedResourceD3D12->QueryInterface(IID_PPV_ARGS(&dxgiRes12));
-
-        D3D12_RESOURCE_DESC desc = sharedResourceD3D12->GetDesc();
-        std::cout << "D3D12 Width: " << std::dec << desc.Width << ", Height: " << desc.Height << ", Format: " << desc.Format << std::endl;
-
-        //auto gpuVA = sharedResorceD3D12->GetGPUVirtualAddress();
-        //std::cout << "D3D12 GPU virtual address: 0x" << std::hex << gpuVA << std::dec << std::endl;
-
-        //HANDLE handle12 = nullptr;
-        //dxgiRes12->GetSharedHandle(&handle12);
-
-        std::cout << "D3D11 Shared Handle: " << handle11 << std::endl;
-        //std::cout << "D3D12 Shared Handle: " << handle12 << std::endl;
+    std::wcout << L"D3D11 Adapter LUID: " << desc11.AdapterLuid.HighPart << L"-" << desc11.AdapterLuid.LowPart << std::endl;
+    std::wcout << L"D3D12 Adapter LUID: " << desc12.AdapterLuid.HighPart << L"-" << desc12.AdapterLuid.LowPart << std::endl;
 
 
+    ComPtr<IDXGIResource> dxgiRes11;
+    sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&dxgiRes11));
 
-        D3D11_TEXTURE2D_DESC desc11_1 = {};
-        sharedTextureD3D11->GetDesc(&desc11_1);
+    HANDLE handle11 = nullptr;
+    dxgiRes11->GetSharedHandle(&handle11);
 
-        D3D12_RESOURCE_DESC desc12_1 = sharedResourceD3D12->GetDesc();
+    ComPtr<IDXGIResource> dxgiRes12;
+    sharedResourceD3D12->QueryInterface(IID_PPV_ARGS(&dxgiRes12));
 
-        // Print and compare
-        std::cout << "D3D11 Format: " << desc11_1.Format << ", Width: " << desc11_1.Width << ", Height: " << desc11_1.Height << std::endl;
-        std::cout << "D3D12 Format: " << desc12_1.Format << ", Width: " << desc12_1.Width << ", Height: " << desc12_1.Height << std::endl;
+    D3D12_RESOURCE_DESC desc = sharedResourceD3D12->GetDesc();
+    std::cout << "D3D12 Width: " << std::dec << desc.Width << ", Height: " << desc.Height << ", Format: " << desc.Format << std::endl;
+
+    D3D11_TEXTURE2D_DESC desc11_1 = {};
+    sharedTextureD3D11->GetDesc(&desc11_1);
+
+    D3D12_RESOURCE_DESC desc12_1 = sharedResourceD3D12->GetDesc();
+
+    // Print and compare
+    std::cout << "D3D11 Format: " << desc11_1.Format << ", Width: " << desc11_1.Width << ", Height: " << desc11_1.Height << std::endl;
+    std::cout << "D3D12 Format: " << desc12_1.Format << ", Width: " << desc12_1.Width << ", Height: " << desc12_1.Height << std::endl;
 
 
-    }
+
+
+    ComPtr<IDXGIKeyedMutex> keyedMutex11;
+    hr = sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&keyedMutex11));
+    bool isKeyedMutexEnabled = (hr == S_OK) ? true : false;
 
     int dumpFrameCount = 3;
-    for (int frameCount = 0; frameCount < 5; ++frameCount) {
+    for (int frameCount = 0; frameCount < 30; ++frameCount) {
 
         std::cout << "Capturing frame +++++++ " << frameCount << std::endl;
 
@@ -480,6 +535,12 @@ int ffmpegEncodeWin::EncodedLoop(void)
         // Get D3D11 texture
         desktopResource.As(&acquiredTexture);
 
+
+        // Acquire keyed mutex before CPU/GPU write on sharedTextureD3D11
+        if (isKeyedMutexEnabled) {
+            keyedMutex11->AcquireSync(0, 100);  // Wait 100 mSecond
+        }
+
         bool convStatus;
         // convert and write frame to sharedTextureD3D11
         if (isNVFormat) {
@@ -488,6 +549,17 @@ int ffmpegEncodeWin::EncodedLoop(void)
         else {
             convStatus = converter.Copy(acquiredTexture.Get(), sharedTextureD3D11.Get());
         }
+
+        if (isKeyedMutexEnabled) {
+            // Release the mutex with key 1 (VAAPI will use 1 as acquire key)
+            hr = keyedMutex11->ReleaseSync(0);
+            if (FAILED(hr)) {
+                std::cerr << "Failed to release keyed mutex on D3D11 side\n";
+                return false;
+            }
+        }
+
+
         if (convStatus) {
             fenceValue++;  // Increment for next frame
             d3d11Context->Flush();   // Push to GPU
@@ -505,13 +577,16 @@ int ffmpegEncodeWin::EncodedLoop(void)
             }
             query->Release();
             */
+
+            // verification
+            /*
             // Get texture desc
             D3D11_TEXTURE2D_DESC desc = {};
             sharedTextureD3D11->GetDesc(&desc);
             std::cout << "sharedTextureD3D11 Format : " << desc.Format << " " <<  std::endl;
             D3D12_RESOURCE_DESC d3d12Desc = sharedResourceD3D12->GetDesc();
             std::cout << "sharedResourceD3D12 Format: " << d3d12Desc.Format << " " << std::endl;
-
+            */
 
             // Signal the shared fence from D3D11
             hr = d3d11Context4->Signal(d3d11Fence.Get(), fenceValue);
@@ -576,10 +651,6 @@ int ffmpegEncodeWin::EncodedLoop(void)
 
 int main(int argc, char* argv[])
 {
-
-
-
-
 
     ffmpegEncodeWin sc;
 

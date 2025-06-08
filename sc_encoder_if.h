@@ -17,6 +17,7 @@ typedef struct {
     uint32_t deviceType;
     uint32_t osVersion;
     char hwDeviceTypeName[20];
+    void* vaDisplay;
 } encIfConfig;
 
 extern void ScEncoderConfigIF(const encIfConfig *cfg);
