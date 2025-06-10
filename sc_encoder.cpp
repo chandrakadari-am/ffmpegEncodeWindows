@@ -308,7 +308,7 @@ void ScreenCaptureEncoder::EncodeFramesOnHW(void *pixelBuffer, bool isTransmissi
     }
     int ret;
     
-    std::cout << "EncodeFramesOnHW ===============================" << std::endl;
+    //std::cout << "EncodeFramesOnHW ===============================" << std::endl;
     m_frame->data[3] = (uint8_t*)(uintptr_t)pixelBuffer;
     m_frame->pts = m_frameIndex++;
     if (m_enccfg.encIf.osVersion == AM_SC_OS_VERSION_WINDOWS) {
@@ -334,7 +334,7 @@ void ScreenCaptureEncoder::EncodeFramesOnHW(void *pixelBuffer, bool isTransmissi
                 lgr_err(lgra_video, "Error in receiving packet from Ecoder Ret: %d", ret);
                 break;
             }
-            std::cout << "Packet Size: " << m_packet->size << std::endl;
+            //std::cout << "Packet Size: " << m_packet->size << std::endl;
             av_packet_rescale_ts(m_packet,m_codecCtx->time_base, m_stream->time_base);
             m_packet->stream_index = m_stream->index;
 

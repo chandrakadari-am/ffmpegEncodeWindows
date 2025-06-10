@@ -8,6 +8,9 @@
 #include "sc_encoder_if.h"
 #include "videoProcessor.h"
 #include <d3d11_4.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -82,6 +85,9 @@ public:
 	void CreateD3D12D3D1Sharing();
 	HRESULT InitializeD3D11Interop();
 	HRESULT ConfigFences(void);
+
+
+
 private:
 	void CheckvaQueryConfigProfiles();
 
@@ -96,6 +102,7 @@ private:
 	ComPtr<ID3D11Texture2D> sharedTextureD3D11;
 	ComPtr<ID3D12Resource> sharedResourceD3D12;
 	ComPtr<ID3D11Texture2D> acquiredTexture;
+	ComPtr<ID3D11Texture2D> tempD3D11Texture;
 	ComPtr<IDXGIResource> desktopResource;
 	IDXGIResource* dxgiResource = nullptr;
 	ComPtr<IDXGIOutput1> dxgiOutput1;
@@ -103,6 +110,7 @@ private:
 
 	ComPtr<IDXGIFactory4> m_factory;
 	ComPtr<IDXGIAdapter1> m_adapter;
+	ComPtr<IDXGIKeyedMutex> keyedMutex11;
 
 	VADisplay m_vaDisplay = { };
 	VASurfaceID vaSurfacesSrc = { };
@@ -131,5 +139,14 @@ private:
 	int vaSurfaceFmt;
 	int vaDescFmt;
 	DXGI_FORMAT dxgiD3D11TextureFmt;
+
+	std::mutex mtx;
+	std::condition_variable cv;
+	bool frameReady;
+	bool exitFlag;
+	int frameCount = 0;
+	int maxFrames = 100;
+	bool isKeyedMutexEnabled;
+	bool encodeFlag = true;
 
 };

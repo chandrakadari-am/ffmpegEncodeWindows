@@ -267,7 +267,7 @@ ComPtr<ID3D12Resource> ffmpegEncodeWin::CaptureScreenD3D12(ComPtr<ID3D12Device> 
     texDesc.Format = dxgiD3D11TextureFmt;  // NV12 format for video frames
     texDesc.SampleDesc.Count = 1;
     texDesc.Usage = D3D11_USAGE_DEFAULT;
-    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;    // NV12 is typically not bindable as render target
+    texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;// | D3D11_BIND_DECODER;    // NV12 is typically not bindable as render target
     texDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;//D3D11_RESOURCE_MISC_SHARED;  // Enable sharing!
     texDesc.CPUAccessFlags = 0;
 
@@ -392,13 +392,23 @@ int ffmpegEncodeWin::FFMPEG_VAAPI_Debug() {
     strcpy_s(cfg.hwDeviceTypeName, sizeof(cfg.hwDeviceTypeName), "vaapi");
     ScEncoderConfigIF(&cfg);
 
-    FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
+    //FillVaSurfaceWithRed(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height);
     vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
+
+    frameReady = false;
+    exitFlag = false;
+    frameCount = 0;
+    maxFrames = 100;
+
+    HRESULT hr = sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&keyedMutex11));
+    isKeyedMutexEnabled = (hr == S_OK) ? true : false;
 
     EncodedLoop();
 
+
     return 0;
 }
+
 
 HRESULT ffmpegEncodeWin::ConfigFences(void) {
     HRESULT hr;
@@ -414,11 +424,6 @@ HRESULT ffmpegEncodeWin::ConfigFences(void) {
 
     bool isSharedFenceSupported = false; // or false, if you want to disable on unknown systems
 
-    //hr = d3d11Device->CheckFeatureSupport(
-    //    D3D11_FEATURE_D3D11_OPTIONS5,
-    //    &featureOptions5,
-    //    sizeof(featureOptions5)
-    //);
 
     if (SUCCEEDED(d3d11Device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS5, &featureOptions5, sizeof(featureOptions5)))) {
         isSharedFenceSupported = true;
@@ -472,57 +477,14 @@ HRESULT ffmpegEncodeWin::ConfigFences(void) {
 int ffmpegEncodeWin::EncodedLoop(void)
 {
     HRESULT hr;
-    bool encodeFlag = true;
-
-    ConfigFences();
 
 
-    DXGI_ADAPTER_DESC desc11 = {}, desc12 = {};
-    ComPtr<IDXGIDevice> dxgiDevice11;
-    d3d11Device->QueryInterface(IID_PPV_ARGS(&dxgiDevice11));
-
-    ComPtr<IDXGIAdapter> adapter11;
-    dxgiDevice11->GetAdapter(&adapter11);
-    adapter11->GetDesc(&desc11);
-
-    m_adapter->GetDesc(&desc12);  // m_adapter used for D3D12
-
-    std::wcout << L"D3D11 Adapter LUID: " << desc11.AdapterLuid.HighPart << L"-" << desc11.AdapterLuid.LowPart << std::endl;
-    std::wcout << L"D3D12 Adapter LUID: " << desc12.AdapterLuid.HighPart << L"-" << desc12.AdapterLuid.LowPart << std::endl;
-
-
-    ComPtr<IDXGIResource> dxgiRes11;
-    sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&dxgiRes11));
-
-    HANDLE handle11 = nullptr;
-    dxgiRes11->GetSharedHandle(&handle11);
-
-    ComPtr<IDXGIResource> dxgiRes12;
-    sharedResourceD3D12->QueryInterface(IID_PPV_ARGS(&dxgiRes12));
-
-    D3D12_RESOURCE_DESC desc = sharedResourceD3D12->GetDesc();
-    std::cout << "D3D12 Width: " << std::dec << desc.Width << ", Height: " << desc.Height << ", Format: " << desc.Format << std::endl;
-
-    D3D11_TEXTURE2D_DESC desc11_1 = {};
-    sharedTextureD3D11->GetDesc(&desc11_1);
-
-    D3D12_RESOURCE_DESC desc12_1 = sharedResourceD3D12->GetDesc();
-
-    // Print and compare
-    std::cout << "D3D11 Format: " << desc11_1.Format << ", Width: " << desc11_1.Width << ", Height: " << desc11_1.Height << std::endl;
-    std::cout << "D3D12 Format: " << desc12_1.Format << ", Width: " << desc12_1.Width << ", Height: " << desc12_1.Height << std::endl;
-
-
-
-
-    ComPtr<IDXGIKeyedMutex> keyedMutex11;
-    hr = sharedTextureD3D11->QueryInterface(IID_PPV_ARGS(&keyedMutex11));
-    bool isKeyedMutexEnabled = (hr == S_OK) ? true : false;
-
-    int dumpFrameCount = 3;
-    for (int frameCount = 0; frameCount < 30; ++frameCount) {
+    int dumpFrameCount = -1;
+    for (int frameCount = 0; frameCount < 100; ++frameCount) {
 
         std::cout << "Capturing frame +++++++ " << frameCount << std::endl;
+        clock_t start = clock();
+        auto start1 = std::chrono::high_resolution_clock::now();
 
         // Try to acquire next frame
         DXGI_OUTDUPL_FRAME_INFO frameInfo = {};
@@ -536,92 +498,46 @@ int ffmpegEncodeWin::EncodedLoop(void)
         desktopResource.As(&acquiredTexture);
 
 
-        // Acquire keyed mutex before CPU/GPU write on sharedTextureD3D11
+        // Acquire keyed mutex before GPU converts and copy on sharedTextureD3D11
         if (isKeyedMutexEnabled) {
-            keyedMutex11->AcquireSync(0, 100);  // Wait 100 mSecond
+            keyedMutex11->AcquireSync(0, 100);  // timeout 100 mSecond
         }
 
-        bool convStatus;
         // convert and write frame to sharedTextureD3D11
+        bool convStatus;
         if (isNVFormat) {
-            convStatus = converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11);
+            if (0) {
+                convStatus = converter.Convert(acquiredTexture.Get(), &sharedTextureD3D11);
+            }
+            else {
+                convStatus = converter.Convert(acquiredTexture.Get(), &tempD3D11Texture);
+                d3d11Context->CopyResource(sharedTextureD3D11.Get(), tempD3D11Texture.Get());
+            }
         }
         else {
+            // rbga format - testing/debug purpose only
             convStatus = converter.Copy(acquiredTexture.Get(), sharedTextureD3D11.Get());
         }
 
         if (isKeyedMutexEnabled) {
-            // Release the mutex with key 1 (VAAPI will use 1 as acquire key)
-            hr = keyedMutex11->ReleaseSync(0);
-            if (FAILED(hr)) {
-                std::cerr << "Failed to release keyed mutex on D3D11 side\n";
-                return false;
-            }
+            keyedMutex11->ReleaseSync(0);
         }
+        // D3D11 Textures written completed here
 
+        // D3D12 resource access starts here
+        // VAAPI will use 1 as acquire key
+        /*
+        if (isKeyedMutexEnabled) {
+            keyedMutex11->AcquireSync(1, 100);  // timeout 100 mSecond
+        }
+        */
 
         if (convStatus) {
-            fenceValue++;  // Increment for next frame
-            d3d11Context->Flush();   // Push to GPU
-            /*
-            // Wait for GPU to finish processing
-            ID3D11Query* query = nullptr;
-            D3D11_QUERY_DESC qdesc = {};
-            qdesc.Query = D3D11_QUERY_EVENT;
-            d3d11Device->CreateQuery(&qdesc, &query);
-
-            d3d11Context->End(query);  // Signal event
-            while (S_OK != d3d11Context->GetData(query, nullptr, 0, 0)) {
-                std::cout << "Frame conversion is going on\n";
-                Sleep(1); // Wait until the GPU is done
-            }
-            query->Release();
-            */
-
-            // verification
-            /*
-            // Get texture desc
-            D3D11_TEXTURE2D_DESC desc = {};
-            sharedTextureD3D11->GetDesc(&desc);
-            std::cout << "sharedTextureD3D11 Format : " << desc.Format << " " <<  std::endl;
-            D3D12_RESOURCE_DESC d3d12Desc = sharedResourceD3D12->GetDesc();
-            std::cout << "sharedResourceD3D12 Format: " << d3d12Desc.Format << " " << std::endl;
-            */
-
-            // Signal the shared fence from D3D11
-            hr = d3d11Context4->Signal(d3d11Fence.Get(), fenceValue);
-            if (FAILED(hr)) {
-                std::cerr << "Failed to signal D3D11 fence.\n";
-                continue;
-            }
-
-            std::cout << "Fence Values: " << sharedFence->GetCompletedValue() << " " << fenceValue << std::endl;
-            // Wait in D3D12 for fenceValue
-            if (sharedFence->GetCompletedValue() < fenceValue) {
-                hr = sharedFence->SetEventOnCompletion(fenceValue, fenceEvent);
-                if (FAILED(hr)) {
-                    std::cerr << "ERROR: SetEventOnCompletion failed\n";
-                }
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
-            if (frameCount == dumpFrameCount) {
-                DumpD3D1TextureToFile(d3d11Device.Get(), d3d11Context.Get(), sharedTextureD3D11.Get(), "d3d11_frame_dump", isNVFormat);
-            }
-
-            D3D12_RESOURCE_BARRIER barrier = {};
-            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-            barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-            barrier.Transition.pResource = sharedResourceD3D12.Get();
-            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;  // or current state
-            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-            commandList->ResourceBarrier(1, &barrier);
-
+            fenceValue++;           // Increment for next frame
+            d3d11Context->Flush();  // Push to GPU
 
             // D3D12 shared resource access starts here
             // encode captured frame, d3d11Texture maps to vaSurfaces via D3D12 resource
-            // somehow this is not happening - #TODO debug
-            vaSyncSurface(m_vaDisplay, m_VASurfaceNV12New);
             if (encodeFlag) {
                 if (frameCount == dumpFrameCount) {
                     DumpVaSurfaceToFile(m_vaDisplay, m_VASurfaceNV12New, m_width, m_height, "vaSufaceDump", isNVFormat);
@@ -639,7 +555,25 @@ int ffmpegEncodeWin::EncodedLoop(void)
         else {
             std::cerr << "Frame conversion failed\n";
         }
+        /*
+        if (isKeyedMutexEnabled) {
+            // Release the mutex with key 0 (VAAPI will use 1 as acquire key)
+            hr = keyedMutex11->ReleaseSync(0);
+            if (FAILED(hr)) {
+                std::cerr << "Failed to release keyed mutex on D3D11 side\n";
+                return false;
+            }
+        }
+        */
         outputDuplication->ReleaseFrame();
+        
+        clock_t end = clock();
+        auto end1 = std::chrono::high_resolution_clock::now();
+        double cpu_time_ms = 1000.0 * (end - start) / CLOCKS_PER_SEC;
+        std::cout << "CPU time used: " << cpu_time_ms << " ms\n";
+
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end1 - start1);
+        std::cout << "Elapsed time: " << std::dec << duration.count() << " µs\n";
     } 
 
     if (encodeFlag) {
@@ -648,6 +582,7 @@ int ffmpegEncodeWin::EncodedLoop(void)
 
     return 0;
 }
+
 
 int main(int argc, char* argv[])
 {

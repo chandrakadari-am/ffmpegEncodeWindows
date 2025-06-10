@@ -1023,6 +1023,8 @@ HRESULT CopyNV12TextureToFile(
         return E_FAIL;
     }
 
+
+
     // Write Y plane
     const uint8_t* yPlane = reinterpret_cast<uint8_t*>(mappedData) + footprints[0].Offset;
     for (UINT y = 0; y < height; ++y) {
@@ -1034,6 +1036,17 @@ HRESULT CopyNV12TextureToFile(
     for (UINT y = 0; y < height / 2; ++y) {
         outFile.write(reinterpret_cast<const char*>(uvPlane + y * footprints[1].Footprint.RowPitch), width);
     }
+
+
+    for (int y = 1000; y < 1016; ++y) {
+        if (y == 1000) printf("\nD3D12  Y : ");
+        printf("%02X ", yPlane[y]);
+    }
+    for (int y = 1000; y < 1016; ++y) {
+        if (y == 1000) printf("\nD3D12 UV : ");
+        printf("%02X ", uvPlane[y]);
+    }
+    printf("\n");
 
     outFile.close();
     readbackBuffer->Unmap(0, nullptr);
